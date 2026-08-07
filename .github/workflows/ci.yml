@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: pytest (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is conda-forge's current python_min and therefore the floor the
+        # package claims; the newest is tested so the claim stays honest at both
+        # ends of the supported range.
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: pytest -q
+
+  package:
+    name: build and packaging checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      - name: Build sdist and wheel
+        run: |
+          pip install build
+          python -m build
+
+      - name: LICENSE must be in the sdist
+        # conda-forge requires a licence file inside the distribution, not only
+        # in the repository.
+        run: tar -tzf dist/*.tar.gz | grep -q 'LICENSE' || { echo "LICENSE missing from sdist"; exit 1; }
+
+      - name: No top-level tests package in the wheel
+        # A conda-forge reviewer check: an installed `tests` package would
+        # collide with every other project that ships one.
+        run: |
+          python - <<'PY'
+          import zipfile, glob, sys
+          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
+          bad = [n for n in names if n.split("/")[0] in {"tests", "test", "_tests"}]
+          sys.exit(f"top-level test package in wheel: {bad}" if bad else 0)
+          PY
+
+      - name: Installed console script works
+        run: |
+          pip install dist/*.whl
+          fixed2tab --version
+          fixed2tab --help > /dev/null
+
+      - name: Package declares no runtime dependencies
+        # Load-bearing for `noarch: python` and for a fast conda-forge review.
+        run: |
+          python - <<'PY'
+          import importlib.metadata as md, sys
+          deps = md.requires("fixed2tab") or []
+          runtime = [d for d in deps if "extra ==" not in d]
+          sys.exit(f"unexpected runtime dependencies: {runtime}" if runtime else 0)
+          PY
+
+  test-data-size:
+    name: test-data stays small
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: No file over 1 MB, total under 100 KB
+        # The Galaxy tool repository fails any file larger than 1 MB, and every
+        # instance installing the tool downloads the whole of test-data.
+        run: |
+          if find test-data -type f -size +1M | grep -q .; then
+            echo "a test-data file exceeds 1 MB:"; find test-data -type f -size +1M; exit 1
+          fi
+          total=$(du -sk test-data | cut -f1)
+          echo "test-data total: ${total} KB"
+          [ "$total" -lt 100 ] || { echo "test-data exceeds 100 KB"; exit 1; }
