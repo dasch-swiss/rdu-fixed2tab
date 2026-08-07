@@ -29,6 +29,7 @@ from fixed2tab.model import (
     Field,
     Fixed2TabError,
     Geometry,
+    InputError,
     RejectReason,
     StrictViolation,
     UsageError,
@@ -220,6 +221,36 @@ def run(args: argparse.Namespace) -> int:
     )
     diagnostics += class_notes
 
+    if classified.counts.table_rows == 0:
+        # Exiting non-zero rather than writing an empty table. With no records
+        # the blank map is vacuously all-blank, so every position looks like a
+        # gutter and the run would "succeed" with zero columns and zero rows —
+        # a total failure wearing the appearance of a clean conversion.
+        raise InputError(
+            "no line was classified as a record.\n"
+            f"  detected record width: {width}\n"
+            "  line lengths: "
+            + ", ".join(f"{n}x{c}" for n, c in profile.histogram[:8])
+            + "\n  rejected by reason: "
+            + ", ".join(f"{k}={v}" for k, v in classified.by_reason.items() if v)
+            + "\n  If the width is wrong, set --record-width; if records are "
+            "shorter than it, add --short-lines pad."
+        )
+
+    if classified.counts.table_rows < 6 and not args.columns:
+        # Detection needs enough records for a position to prove itself
+        # non-blank. On a small sample, positions that are merely usually blank
+        # look always blank, so the field count can come out right while the
+        # boundaries are wrong — the failure is silent and plausible.
+        diagnostics.append(
+            Diagnostic(
+                "under-determined",
+                f"only {classified.counts.table_rows} record(s) were classified; "
+                "the detected geometry may be under-determined by so small a "
+                "sample. Check the column ranges below against a wider file.",
+            )
+        )
+
     # The blank-run scan runs even under --columns: the report promises a
     # per-field blank rate and a run listing, and those are how a user judges
     # whether their supplied geometry is right.
@@ -253,6 +284,16 @@ def run(args: argparse.Namespace) -> int:
     else:
         fields, runs = derive_fields(classified.blank, args.min_gutter)
         detected = True
+        if len(fields) == 1:
+            diagnostics.append(
+                Diagnostic(
+                    "single-field",
+                    f"no run of {args.min_gutter} or more blank positions was "
+                    "found, so the whole record is one column. Lower "
+                    "--min-gutter if the columns are separated by a single "
+                    "space, or supply --columns.",
+                )
+            )
 
     named, name_notes = name_fields(fields, classified.preamble.header)
     if args.columns:
@@ -317,6 +358,12 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return int(run(args))
+    except BrokenPipeError:
+        # A downstream reader closed early. Not an error worth a traceback.
+        return int(ExitCode.SUCCESS)
+    except OSError as exc:
+        print(f"fixed2tab: cannot write output: {exc}", file=sys.stderr)
+        return int(ExitCode.INPUT)
     except Fixed2TabError as exc:
         # stderr carries messages only when the exit status is non-zero. Warnings
         # go to the report instead: Galaxy's legacy stdio handling treats any
