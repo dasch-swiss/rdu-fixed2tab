@@ -7,6 +7,7 @@ keeps memory proportional to the record width instead of the file size.
 from __future__ import annotations
 
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 
 from fixed2tab.detect import LineSource, ShortLinePolicy, classify_line
@@ -20,7 +21,26 @@ from fixed2tab.model import (
     RejectedLine,
 )
 
-__all__ = ["HeaderMode", "carve_cells", "write_outputs"]
+__all__ = ["FieldStats", "HeaderMode", "carve_cells", "write_outputs"]
+
+
+@dataclass(frozen=True, slots=True)
+class FieldStats:
+    """Per-field figures gathered while carving, for the report.
+
+    Collected here because only pass 3 knows both the fields and the record
+    contents, and doing it inline avoids a fourth pass over the file.
+    """
+
+    blank_counts: tuple[int, ...] = ()
+    samples: tuple[tuple[str, ...], ...] = ()  # first three rows, as carved
+    rows: int = 0
+
+    def blank_rate(self, index: int) -> float:
+        return self.blank_counts[index] / self.rows if self.rows else 0.0
+
+    def sample_for(self, index: int) -> tuple[str, ...]:
+        return tuple(row[index] for row in self.samples if index < len(row))
 
 
 class HeaderMode:
@@ -96,7 +116,7 @@ def write_outputs(
     short_policy: str = ShortLinePolicy.DEFAULT,
     header_line: int | None = None,
     header_mode: str = HeaderMode.DEFAULT,
-) -> Counts:
+) -> tuple[Counts, FieldStats, dict[str, int]]:
     """Write the table and the rejected lines; return the reconciliation counts.
 
     Both files are always written, the rejected one possibly empty, so that a
@@ -107,6 +127,11 @@ def write_outputs(
     rows = 0
     rejects = 0
     lines_seen = 0
+    blank_counts = [0] * len(geometry.fields)
+    samples: list[tuple[str, ...]] = []
+    # Counted here rather than in a separate pass: the carver already sees every
+    # verdict, so re-deriving them elsewhere would mean reading the file again.
+    by_reason = {name: 0 for name in RejectReason.names()}
 
     with (
         table_path.open("w", encoding="utf-8", newline="") as table,
@@ -122,6 +147,7 @@ def write_outputs(
             lines_seen += 1
             if reason is not None:
                 rejected.write(f"{number}\t{reason.value}\t{text}\n")
+                by_reason[reason.value] += 1
                 rejects += 1
                 continue
             assert record is not None
@@ -133,10 +159,23 @@ def write_outputs(
                     "through a Galaxy upload, check that 'convert spaces to "
                     "tabs' was not applied."
                 )
-            table.write("\t".join(carve_cells(record, geometry.fields)) + "\n")
+            cells = carve_cells(record, geometry.fields)
+            for i, cell in enumerate(cells):
+                if not cell:
+                    blank_counts[i] += 1
+            if len(samples) < 3:
+                # The first three classified records, in input order (REQ-4.11).
+                # A fixed rule matters: without one the report would vary between
+                # runs and could not be compared byte for byte.
+                samples.append(tuple(cells))
+            table.write("\t".join(cells) + "\n")
             rows += 1
 
-    return Counts(input_lines=lines_seen, table_rows=rows, rejected_lines=rejects)
+    return (
+        Counts(input_lines=lines_seen, table_rows=rows, rejected_lines=rejects),
+        FieldStats(tuple(blank_counts), tuple(samples), rows),
+        by_reason,
+    )
 
 
 def rejected_line_records(
