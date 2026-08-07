@@ -19,11 +19,14 @@ from pathlib import Path
 
 from fixed2tab.header import Preamble, build_preamble
 from fixed2tab.model import (
+    BlankRun,
     Counts,
     Diagnostic,
     InputError,
     RejectReason,
+    Field,
     RejectedLine,
+    UsageError,
     count_by_reason,
 )
 
@@ -33,7 +36,9 @@ __all__ = [
     "LineSource",
     "ShortLinePolicy",
     "classify_input",
+    "blank_runs",
     "classify_line",
+    "derive_fields",
     "detect_record_width",
     "has_control_char",
     "profile_lengths",
@@ -303,9 +308,9 @@ class ClassifiedInput:
     """The result of pass 2."""
 
     preamble: Preamble
-    records: tuple[str, ...]
     rejected: tuple[RejectedLine, ...]
     counts: Counts
+    blank: tuple[bool, ...] = ()
     padded_lines: int = 0
 
     @property
@@ -328,8 +333,13 @@ def classify_input(
     in_preamble = True
     preamble = Preamble()
 
-    records: list[str] = []
     rejected: list[RejectedLine] = []
+    # One boolean per character position — the entire per-record state. Records
+    # are deliberately NOT retained: holding them would make memory grow with
+    # the file, which REQ-0.16 forbids. Pass 3 re-streams and re-classifies,
+    # which is cheap, rather than buffering 6 MB of strings here.
+    blank = [True] * record_width
+    n_records = 0
     total = 0
     padded = 0
 
@@ -378,14 +388,17 @@ def classify_input(
         assert record is not None
         if before < record_width:
             padded += 1
-        records.append(record)
+        n_records += 1
+        for i, ch in enumerate(record):
+            if blank[i] and ch != " ":
+                blank[i] = False
 
     if in_preamble:
         # No line ever matched the record width: everything is preamble.
         preamble = build_preamble(preamble_acc, header_line)
 
     counts = Counts(
-        input_lines=total, table_rows=len(records), rejected_lines=len(rejected)
+        input_lines=total, table_rows=n_records, rejected_lines=len(rejected)
     )
 
     diagnostics: list[Diagnostic] = []
@@ -407,11 +420,63 @@ def classify_input(
                     "use --header-line or --record-width if it is wrong.",
                 )
             )
-    if not records:
+    if not n_records:
         diagnostics.append(
             Diagnostic("no-records", "no line was classified as a record.")
         )
     return (
-        ClassifiedInput(preamble, tuple(records), tuple(rejected), counts, padded),
+        ClassifiedInput(preamble, tuple(rejected), counts, tuple(blank), padded),
         diagnostics,
     )
+
+
+def blank_runs(blank: tuple[bool, ...]) -> tuple[BlankRun, ...]:
+    """Maximal runs of positions blank in every record, as 1-based ranges.
+
+    Strictly *every* record — never a percentage. A threshold looks harmless and
+    is not: a column blank in 98% of rows is indistinguishable from whitespace
+    by frequency, so thresholding classifies it as a gutter and then discards
+    every row that carries a value there. Measured on the reference file, a 90%
+    threshold silently dropped all 16 intercalary-day records and every
+    quality-flagged row — the exceptional rows, which are the interesting ones.
+    """
+    runs: list[BlankRun] = []
+    start: int | None = None
+    for i, is_blank in enumerate(blank):
+        if is_blank and start is None:
+            start = i
+        elif not is_blank and start is not None:
+            runs.append(BlankRun(start + 1, i))
+            start = None
+    if start is not None:
+        runs.append(BlankRun(start + 1, len(blank)))
+    return tuple(runs)
+
+
+def derive_fields(
+    blank: tuple[bool, ...], min_gutter: int = 2
+) -> tuple[tuple[Field, ...], tuple[BlankRun, ...]]:
+    """Split the record into fields at blank runs of at least ``min_gutter``.
+
+    ``min_gutter`` is load-bearing and genuinely file-dependent. On the reference
+    file it yields 16 fields at 1, 11 at 2, 10 at 3 and 8 at 4: at 1 it splits
+    inside ``4h  6m 22s``, at 3 it merges two sparse flag columns whose
+    separating run is exactly two wide. The report lists every run with its
+    width so a user can see what another value would produce.
+    """
+    if min_gutter < 1:
+        raise UsageError(f"--min-gutter must be at least 1, got {min_gutter}")
+
+    runs = blank_runs(blank)
+    width = len(blank)
+    fields: list[Field] = []
+    cursor = 1  # 1-based position of the next unclaimed character
+    for run in runs:
+        if run.width < min_gutter:
+            continue  # a narrow run sits inside a field, not between two
+        if run.start > cursor:
+            fields.append(Field(cursor, run.start - 1))
+        cursor = run.end + 1
+    if cursor <= width:
+        fields.append(Field(cursor, width))
+    return tuple(fields), runs
