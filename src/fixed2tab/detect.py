@@ -17,13 +17,25 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from fixed2tab.model import Diagnostic, InputError
+from fixed2tab.header import Preamble, build_preamble
+from fixed2tab.model import (
+    Counts,
+    Diagnostic,
+    InputError,
+    RejectReason,
+    RejectedLine,
+    count_by_reason,
+)
 
 __all__ = [
+    "ClassifiedInput",
     "LengthProfile",
     "LineSource",
     "ShortLinePolicy",
+    "classify_input",
+    "classify_line",
     "detect_record_width",
+    "has_control_char",
     "profile_lengths",
 ]
 
@@ -39,15 +51,28 @@ class ShortLinePolicy:
     """What to do with lines shorter than the record width.
 
     Many real fixed-width files have trailing blanks stripped, so records come
-    out short. Rejecting them wholesale hands the user an empty table and a
-    rejected file containing their entire dataset — a tool that looks broken.
-    Padding is therefore the default; ``reject`` remains available for files
-    where a short line really does mean corruption.
+    out short, and rejecting them wholesale hands the user an empty table with
+    their entire dataset in the rejected file — a tool that looks broken. That
+    argued for padding by default, until it was measured.
+
+    **Padding cannot be the default.** On a paginated file, short noise lines
+    are padded out to the record width and then satisfy every remaining
+    criterion: a ``Page 1`` marker and an ``end of table`` footer both became
+    data rows. Silently promoting page furniture to records is precisely the
+    class of corruption this tool exists to prevent, and it is worse than a
+    visible over-rejection, because an empty table is obvious while two bogus
+    rows in fifty thousand are not.
+
+    So ``reject`` is the default and the length test stays strict. When a file
+    genuinely is right-trimmed, pass 1 recognises the signature and the report
+    says so, naming ``--short-lines pad`` — an explicit opt-in, on a file the
+    user has been told about.
     """
 
     PAD = "pad"
     REJECT = "reject"
-    CHOICES = (PAD, REJECT)
+    CHOICES = (REJECT, PAD)
+    DEFAULT = REJECT
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,8 +233,185 @@ def profile_lengths(source: LineSource) -> tuple[LengthProfile, list[Diagnostic]
                 "right-trimmed",
                 f"line lengths vary widely and none exceeds {profile.max_length}, "
                 "which is the signature of a file whose trailing blanks were "
-                f"stripped. Consider --record-width {profile.max_length} "
-                "--short-lines pad.",
+                f"stripped. Records shorter than the detected width will be "
+                "REJECTED, not padded. To parse this file, pass "
+f"--record-width {profile.max_length} --short-lines pad.",
             )
         )
     return profile, diagnostics
+
+
+def has_control_char(text: str) -> bool:
+    """Whether the line carries a control character other than TAB (REQ-2.8).
+
+    Form feeds are the common case: paginated output separates pages with one.
+    TAB is excluded deliberately — inside a record it is fatal rather than a
+    reason to skip the line, because emitting it would corrupt the TSV.
+    """
+    return any(any(lo <= ord(ch) <= hi for lo, hi in CONTROL_RANGES) for ch in text)
+
+
+def classify_line(
+    text: str,
+    record_width: int,
+    preamble_rstripped: frozenset[str],
+    short_policy: str = ShortLinePolicy.DEFAULT,
+    past_preamble: bool = True,
+) -> tuple[str | None, RejectReason | None]:
+    """Classify one line, returning either its record text or a rejection reason.
+
+    The four criteria are applied in a fixed order (REQ-2.6) — length, control
+    characters, preamble identity, rule line — and the line is attributed to the
+    first one that matches. A short line of dashes satisfies two of them at
+    once, so without a stated order the grouped counts in the report would not
+    be reproducible.
+
+    Crucially, none of these criteria looks at the gutters. Using gutter
+    conformance to detect noise would be circular, and it is exactly how a
+    thresholded earlier design silently discarded every intercalary-day record.
+    """
+    if len(text) != record_width:
+        if (
+            short_policy == ShortLinePolicy.PAD
+            and past_preamble
+            and len(text) < record_width
+        ):
+            text = text.ljust(record_width)
+        else:
+            return None, RejectReason.LENGTH
+
+    if has_control_char(text):
+        return None, RejectReason.CONTROL_CHAR
+
+    if text.rstrip(" ") in preamble_rstripped:
+        return None, RejectReason.PREAMBLE_IDENTITY
+
+    # A rule line must BOTH lack digits AND be built from at most two distinct
+    # characters. Requiring only the second would reject a legitimate all-zero
+    # record such as "0   0   0.0   0" — two distinct non-blank characters —
+    # which is the same class of silent, biased data loss the tool exists to
+    # prevent.
+    stripped = text.strip(" ")
+    if not any(ch.isdigit() for ch in text) and len(set(stripped)) <= 2:
+        return None, RejectReason.RULE_LINE
+
+    return text, None
+
+
+@dataclass(frozen=True, slots=True)
+class ClassifiedInput:
+    """The result of pass 2."""
+
+    preamble: Preamble
+    records: tuple[str, ...]
+    rejected: tuple[RejectedLine, ...]
+    counts: Counts
+    padded_lines: int = 0
+
+    @property
+    def by_reason(self) -> dict[str, int]:
+        return count_by_reason(self.rejected)
+
+
+def classify_input(
+    source: LineSource,
+    record_width: int,
+    short_policy: str = ShortLinePolicy.DEFAULT,
+    header_line: int | None = None,
+) -> tuple[ClassifiedInput, list[Diagnostic]]:
+    """Pass 2. Split the input into records and rejects, and find the header.
+
+    Streams once. The preamble is bounded by construction — it ends at the first
+    record-width line — so memory does not grow with the file.
+    """
+    preamble_acc: list[tuple[int, str]] = []
+    in_preamble = True
+    preamble = Preamble()
+
+    records: list[str] = []
+    rejected: list[RejectedLine] = []
+    total = 0
+    padded = 0
+
+    for number, text in source:
+        total += 1
+
+        if in_preamble:
+            # An explicit --header-line extends the preamble through that line
+            # regardless of its length. Without this the flag is not the escape
+            # hatch REQ-0.7b claims: a heading that happens to match the record
+            # width never enters the preamble, so it is carved as a data row and
+            # there is no way to say otherwise.
+            # With --header-line the preamble ends *at that line*. Anchoring on
+            # the first record-width line instead does not work: under
+            # --short-lines pad the records are shorter than the width, so no
+            # line matches exactly and everything stays in the preamble. An
+            # earlier version of this fix extended the preamble without moving
+            # the boundary and produced zero records.
+            still_preamble = (
+                number <= header_line
+                if header_line is not None
+                else len(text) != record_width
+            )
+            if still_preamble:
+                preamble_acc.append((number, text))
+                # A forced preamble line may legitimately be record-width — that
+                # is the case --header-line exists for — so attribute by what is
+                # true of the line rather than assuming a length mismatch.
+                reason = (
+                    RejectReason.LENGTH
+                    if len(text) != record_width
+                    else RejectReason.PREAMBLE_IDENTITY
+                )
+                rejected.append(RejectedLine(number, text, reason))
+                continue
+            in_preamble = False
+            preamble = build_preamble(preamble_acc, header_line)
+
+        before = len(text)
+        record, reason = classify_line(
+            text, record_width, preamble.rstripped, short_policy, past_preamble=True
+        )
+        if reason is not None:
+            rejected.append(RejectedLine(number, text, reason))
+            continue
+        assert record is not None
+        if before < record_width:
+            padded += 1
+        records.append(record)
+
+    if in_preamble:
+        # No line ever matched the record width: everything is preamble.
+        preamble = build_preamble(preamble_acc, header_line)
+
+    counts = Counts(
+        input_lines=total, table_rows=len(records), rejected_lines=len(rejected)
+    )
+
+    diagnostics: list[Diagnostic] = []
+    if padded:
+        diagnostics.append(
+            Diagnostic(
+                "short-lines-padded",
+                f"{padded} line(s) shorter than the record width were padded with "
+                "spaces. Use --short-lines reject to treat them as errors instead.",
+            )
+        )
+        if preamble.lines:
+            diagnostics.append(
+                Diagnostic(
+                    "padding-and-preamble",
+                    "padding is active and this file has a preamble. The preamble "
+                    "boundary uses exact line lengths, so a short *first* record "
+                    "would be absorbed into it. Check the header shown above, and "
+                    "use --header-line or --record-width if it is wrong.",
+                )
+            )
+    if not records:
+        diagnostics.append(
+            Diagnostic("no-records", "no line was classified as a record.")
+        )
+    return (
+        ClassifiedInput(preamble, tuple(records), tuple(rejected), counts, padded),
+        diagnostics,
+    )
