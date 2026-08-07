@@ -214,3 +214,82 @@ def test_golden_reference_conversion(tmp_path):
     assert sum(1 for row in mine if "epagomene" in row) == 677
     assert sum(1 for row in mine if row.split("\t")[8].strip()) == 822
     assert len(rejected.read_text().rstrip("\n").split("\n")) == 2
+
+
+@pytest.mark.req("REQ-4.3")
+def test_columns_still_reports_the_blank_run_scan(tmp_path, clean):
+    """Supplying --columns must not suppress the scan the report depends on."""
+    _s, _t, report, _j = convert(tmp_path, clean, "--columns", "1-12,18-27")
+    text = report.read_text()
+    assert "Blank runs" in text
+    assert "13-17(5)" in text  # a real run from the reference geometry
+
+
+@pytest.mark.req("REQ-4.10")
+def test_columns_warns_about_uncovered_data(tmp_path, clean):
+    """Line reconciliation conserves lines; only this conserves characters."""
+    _s, _t, report, _j = convert(tmp_path, clean, "--columns", "1-12:DATE,18-27:TIME")
+    text = report.read_text()
+    assert "uncovered-positions" in text
+    # Reported as ranges, and complete — the sparse `code` column at 92-93 sits
+    # far to the right and would be hidden by any truncated list of positions.
+    assert "92-93" in text
+    assert "31-37" in text
+
+
+@pytest.mark.req("REQ-1.11")
+@pytest.mark.req("REQ-0.7b")
+def test_empty_preamble_still_emits_three_outputs(tmp_path):
+    """No header at all: names go positional and the rejected file is empty."""
+    rows = ["aa 11  bb 222"] * 8
+    f = tmp_path / "noheader.txt"
+    f.write_text("\n".join(rows) + "\n", encoding="ascii")
+    status, table, report, rejected = convert(tmp_path, f)
+    assert status == ExitCode.SUCCESS
+    assert rejected.exists() and rejected.read_text() == ""
+    assert len(table.read_text().rstrip("\n").split("\n")) == 8
+    assert "no-header" in report.read_text()
+
+
+@pytest.mark.req("REQ-0.4")
+def test_tied_lengths_recorded_in_the_report(tmp_path):
+    """Equal counts at two lengths: the greater wins, and the tie is disclosed."""
+    f = tmp_path / "tied.txt"
+    short = "aa 11  bb 2"
+    long_ = "aa 11  bb 222"
+    f.write_text("\n".join([short] * 3 + [long_] * 3) + "\n", encoding="ascii")
+    _s, _t, report, _j = convert(tmp_path, f)
+    text = report.read_text()
+    assert "width-tie" in text
+    assert f"record width     {len(long_)}" in text
+
+
+@pytest.mark.req("REQ-0.1")
+def test_crlf_input_yields_the_same_table_as_lf(tmp_path, clean):
+    """Galaxy's uploader normalises line endings; the CLI must agree with it."""
+    crlf = tmp_path / "crlf.txt"
+    crlf.write_bytes(clean.read_bytes().replace(b"\n", b"\r\n"))
+    _s1, lf_table, _r1, _j1 = convert(tmp_path, clean, prefix="lf")
+    _s2, crlf_table, _r2, _j2 = convert(tmp_path, crlf, prefix="crlf")
+    assert crlf_table.read_bytes() == lf_table.read_bytes()
+
+
+@pytest.mark.req("REQ-1.8")
+def test_undecodable_input_exits_input_error_naming_the_line(tmp_path, capsys):
+    f = tmp_path / "bad.txt"
+    f.write_bytes(b"heading line here\n" + b"aaa 111 bbb 22 cc\n" * 3 + b"\xff\xfe bad line\n")
+    status, *_ = convert(tmp_path, f)
+    assert status == ExitCode.INPUT
+    assert "line 5" in capsys.readouterr().err
+
+
+@pytest.mark.req("REQ-0.12")
+def test_tab_in_a_record_is_fatal_with_a_pointed_message(tmp_path, capsys):
+    good = "aaa 111  bbb 22"
+    tabbed = "aaa 111\tbbb 22"
+    f = tmp_path / "tabbed.txt"
+    f.write_text("heading\n" + "\n".join([good, good, tabbed.ljust(len(good)), good]) + "\n", encoding="ascii")
+    status, *_ = convert(tmp_path, f)
+    err = capsys.readouterr().err
+    if status == ExitCode.INPUT:
+        assert "TAB" in err and "convert spaces to tabs" in err

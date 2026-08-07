@@ -282,13 +282,25 @@ def run(args: argparse.Namespace) -> int:
             if not is_blank and (i + 1) not in covered
         ]
         if uncovered:
+            # Collapsed into ranges rather than listed position by position. A
+            # dropped column is a contiguous run, and an itemised list truncated
+            # at twenty entries would show the first column's positions and hide
+            # every later one — the opposite of what this warning is for.
+            spans: list[str] = []
+            run_start = previous = uncovered[0]
+            for position in uncovered[1:]:
+                if position != previous + 1:
+                    spans.append(
+                        str(run_start) if run_start == previous else f"{run_start}-{previous}"
+                    )
+                    run_start = position
+                previous = position
+            spans.append(str(run_start) if run_start == previous else f"{run_start}-{previous}")
             diagnostics.append(
                 Diagnostic(
                     "uncovered-positions",
                     f"{len(uncovered)} character position(s) carrying data are in "
-                    f"no --columns range and will be dropped: "
-                    f"{', '.join(str(p) for p in uncovered[:20])}"
-                    + (" …" if len(uncovered) > 20 else ""),
+                    f"no --columns range and will be dropped: {', '.join(spans)}",
                 )
             )
         if args.min_gutter != 2:
