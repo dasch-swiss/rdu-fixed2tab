@@ -128,7 +128,9 @@ def sanitise(name: str) -> str:
 
 
 def name_fields(
-    fields: Sequence[Field], header: str | None
+    fields: Sequence[Field],
+    header: str | None,
+    supplied: Sequence[str | None] | None = None,
 ) -> tuple[tuple[Field, ...], list[Diagnostic]]:
     """Name each field from the header tokens whose spans overlap it (REQ-5.1).
 
@@ -141,24 +143,42 @@ def name_fields(
     columns it actually spans.
     """
     diagnostics: list[Diagnostic] = []
+    # A name the user wrote always wins, and no diagnostic about *deriving* a
+    # name applies to a field that was named explicitly. Passing them in here
+    # rather than overwriting afterwards is what keeps the two consistent:
+    # overwriting left the report warning about duplicates it had just resolved.
+    given = list(supplied) if supplied is not None else [None] * len(fields)
 
     if header is None:
         named = tuple(
-            Field(f.start, f.end, f"col{i}") for i, f in enumerate(fields, start=1)
+            Field(f.start, f.end, sanitise(g) if g else f"col{i}")
+            for i, (f, g) in enumerate(zip(fields, given), start=1)
         )
-        diagnostics.append(
-            Diagnostic(
-                "no-header",
-                "no header line was identified; columns are named positionally.",
+        if any(g is None for g in given):
+            diagnostics.append(
+                Diagnostic(
+                    "no-header",
+                    "no header line was identified; columns without a supplied "
+                    "name are named positionally.",
+                )
             )
-        )
-        return named, diagnostics
+        return _disambiguate(named, diagnostics)
 
     tokens = tokenize(header)
     used: set[int] = set()
     named: list[Field] = []
 
-    for index, f in enumerate(fields, start=1):
+    for index, (f, g) in enumerate(zip(fields, given), start=1):
+        if g is not None:
+            named.append(Field(f.start, f.end, sanitise(g)))
+            # Still mark the overlapping tokens as used, so a token consumed by
+            # an explicitly named field is not reported as discarded.
+            used.update(
+                i
+                for i, tok in enumerate(tokens)
+                if not (tok[1] < f.start or tok[0] > f.end)
+            )
+            continue
         hits = [
             (i, tok)
             for i, tok in enumerate(tokens)
@@ -204,8 +224,13 @@ def name_fields(
             )
         )
 
-    # Disambiguate collisions only after every name is known, so the suffix
-    # reflects the field's real position rather than the order they were found.
+    return _disambiguate(tuple(named), diagnostics)
+
+
+def _disambiguate(
+    named: tuple[Field, ...], diagnostics: list[Diagnostic]
+) -> tuple[tuple[Field, ...], list[Diagnostic]]:
+    """Suffix colliding names with the field index, reporting only real clashes."""
     seen: dict[str, int] = {}
     final: list[Field] = []
     duplicates: list[str] = []

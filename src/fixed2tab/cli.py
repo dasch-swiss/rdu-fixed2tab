@@ -22,7 +22,7 @@ from fixed2tab.detect import (
     derive_fields,
     profile_lengths,
 )
-from fixed2tab.header import name_fields, sanitise
+from fixed2tab.header import name_fields
 from fixed2tab.model import (
     Diagnostic,
     ExitCode,
@@ -386,14 +386,15 @@ def run(args: argparse.Namespace) -> int:
                 )
             )
 
-    named, name_notes = name_fields(fields, classified.preamble.header)
-    if args.columns is not None or args.widths is not None:
-        # A name written into the geometry spec wins over one derived from the header:
-        # the user typed it deliberately.
-        named = tuple(
-            Field(f.start, f.end, sanitise(given.name) if given.name else f.name)
-            for f, given in zip(named, fields)
-        )
+    # Supplied names go *in* rather than being pasted over the derived ones
+    # afterwards. Overwriting left the report warning about duplicates it had
+    # just resolved — and a report that flags a problem it has already fixed
+    # undermines the one artefact this tool asks the reader to trust.
+    named, name_notes = name_fields(
+        fields,
+        classified.preamble.header,
+        supplied=[f.name for f in fields] if not detected else None,
+    )
     diagnostics += name_notes
 
     # In formatted output a single heading commonly sits above several fields —

@@ -352,3 +352,26 @@ def test_headingless_fields_are_flagged(tmp_path):
     f.write_text("           GROUP LABEL\n" + "\n".join(rows) + "\n", encoding="ascii")
     _s, _t, report, _j = convert(tmp_path, f)
     assert "fields-without-heading" in report.read_text()
+
+
+@pytest.mark.req("REQ-5.8")
+def test_supplied_names_suppress_stale_naming_warnings(tmp_path):
+    """A report must not warn about a problem the user's own names resolved.
+
+    Derived names are computed first; if the supplied ones are pasted over them
+    afterwards, the diagnostics from derivation survive and the report warns
+    about duplicates that no longer exist.
+    """
+    rows = [f" {i:4d}  {i * 2:5d}  {i * 3:5d} " for i in range(8)]
+    f = tmp_path / "dupes.txt"
+    f.write_text("  VAL    VAL    VAL\n" + "\n".join(rows) + "\n", encoding="ascii")
+
+    _s, _t, derived_report, _j = convert(tmp_path, f, prefix="derived")
+    assert "duplicate-names" in derived_report.read_text()
+
+    _s2, _t2, named_report, _j2 = convert(
+        tmp_path, f, "--columns", "2-5:First,8-12:Second,15-19:Third", prefix="named"
+    )
+    text = named_report.read_text()
+    assert "duplicate-names" not in text
+    assert "header-token-discarded" not in text  # those tokens named the fields

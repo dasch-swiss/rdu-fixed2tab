@@ -30,7 +30,11 @@ build:
   # than `scripts=`, no pre/post-link scripts, no selectors, and no
   # version-dependent dependencies.
   noarch: python
-  number: 0
+  # Bump on every local rebuild of unchanged source. conda keys its cache on
+  # name-version-build, so rebuilding without a bump reinstalls the previous
+  # package silently -- even with --force-reinstall. The conda-forge submission
+  # resets this to 0, since there the version always changes.
+  number: 1
   script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
   entry_points:
     - fixed2tab = fixed2tab.cli:main
