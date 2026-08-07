@@ -58,7 +58,9 @@ class HeaderMode:
     DEFAULT = NONE
 
 
-def carve_cells(record: str, fields: tuple[Field, ...]) -> list[str]:
+def carve_cells(
+    record: str, fields: tuple[Field, ...], collapse: bool = False
+) -> list[str]:
     """Extract one row of cells from a record.
 
     Cells are verbatim substrings with leading and trailing spaces removed and
@@ -67,7 +69,15 @@ def carve_cells(record: str, fields: tuple[Field, ...]) -> list[str]:
     Conversion is a separate concern, and doing it here is how a lossless
     extraction quietly becomes a lossy one.
     """
-    return [f.slice_of(record).strip(" ") for f in fields]
+    cells = [f.slice_of(record).strip(" ") for f in fields]
+    if collapse:
+        # Opt-in, because it is a transformation rather than an extraction. It
+        # earns its place when a range merges several layout columns into one
+        # value — "761     Tevet (4)         1" carries gaps that were only ever
+        # alignment — but it would also destroy the meaningful spacing in
+        # "4h  6m 22s", which is why it is off by default.
+        cells = [" ".join(part for part in cell.split(" ") if part) for cell in cells]
+    return cells
 
 
 def iter_classified(
@@ -116,6 +126,7 @@ def write_outputs(
     short_policy: str = ShortLinePolicy.DEFAULT,
     header_line: int | None = None,
     header_mode: str = HeaderMode.DEFAULT,
+    collapse: bool = False,
 ) -> tuple[Counts, FieldStats, dict[str, int]]:
     """Write the table and the rejected lines; return the reconciliation counts.
 
@@ -159,7 +170,7 @@ def write_outputs(
                     "through a Galaxy upload, check that 'convert spaces to "
                     "tabs' was not applied."
                 )
-            cells = carve_cells(record, geometry.fields)
+            cells = carve_cells(record, geometry.fields, collapse)
             for i, cell in enumerate(cells):
                 if not cell:
                     blank_counts[i] += 1

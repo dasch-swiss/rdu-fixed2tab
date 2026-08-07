@@ -293,3 +293,62 @@ def test_tab_in_a_record_is_fatal_with_a_pointed_message(tmp_path, capsys):
     err = capsys.readouterr().err
     if status == ExitCode.INPUT:
         assert "TAB" in err and "convert spaces to tabs" in err
+
+
+@pytest.mark.req("REQ-4.11")
+def test_widths_equal_the_equivalent_columns(tmp_path, clean):
+    """A FORTRAN FORMAT transcribes directly, and must mean the same thing."""
+    _s1, by_columns, _r1, _j1 = convert(
+        tmp_path, clean, "--columns", "1-12:DATE,18-27:TIME", prefix="cols"
+    )
+    # 1-12 then a 5-position skip then 18-27: exactly what 12,5x,10 says.
+    _s2, by_widths, _r2, _j2 = convert(
+        tmp_path, clean, "--widths", "12:DATE,5x,10:TIME", prefix="widths"
+    )
+    assert by_widths.read_text() == by_columns.read_text()
+
+
+@pytest.mark.req("REQ-4.11")
+def test_widths_skip_defaults_to_one(tmp_path, clean):
+    from fixed2tab.cli import parse_widths
+
+    assert parse_widths("2,x,3", 10) == parse_widths("2,1x,3", 10)
+
+
+@pytest.mark.req("REQ-4.11")
+@pytest.mark.parametrize("spec", ["5,oops", "0", "5,3000", "", "5,0x,3"])
+def test_bad_widths_exit_usage(tmp_path, clean, spec):
+    """An empty value is a mistake to report, not a silent fallback to detection."""
+    status, *_ = convert(tmp_path, clean, "--widths", spec)
+    assert status == ExitCode.USAGE
+
+
+@pytest.mark.req("REQ-4.9")
+def test_empty_columns_is_also_a_usage_error(tmp_path, clean):
+    status, *_ = convert(tmp_path, clean, "--columns", "")
+    assert status == ExitCode.USAGE
+
+
+@pytest.mark.req("REQ-4.12")
+def test_collapse_spaces_is_opt_in_and_global(tmp_path, clean):
+    _s, verbatim, _r, _j = convert(tmp_path, clean, prefix="verbatim")
+    _s2, collapsed, _r2, _j2 = convert(tmp_path, clean, "--collapse-spaces", prefix="collapsed")
+    # Asserted as a property rather than on one hand-picked cell: some cell must
+    # carry a run of two spaces when off, and none may when on.
+    verbatim_cells = [c for row in verbatim.read_text().rstrip("\n").split("\n") for c in row.split("\t")]
+    collapsed_cells = [c for row in collapsed.read_text().rstrip("\n").split("\n") for c in row.split("\t")]
+    assert any("  " in c for c in verbatim_cells), "fixture has no multi-space cell to test"
+    assert not any("  " in c for c in collapsed_cells)
+    # and the collapse is only whitespace: the tokens themselves are untouched
+    assert [c.split() for c in verbatim_cells] == [c.split() for c in collapsed_cells]
+
+
+@pytest.mark.req("REQ-5.11")
+def test_headingless_fields_are_flagged(tmp_path):
+    """In formatted output one heading often covers several columns."""
+    rows = [f" {i:4d}   {i * 2:5d}   ABC   {i * 3:4d}" for i in range(8)]
+    f = tmp_path / "grouped.txt"
+    # A single heading sitting above only the middle of three columns.
+    f.write_text("           GROUP LABEL\n" + "\n".join(rows) + "\n", encoding="ascii")
+    _s, _t, report, _j = convert(tmp_path, f)
+    assert "fields-without-heading" in report.read_text()
