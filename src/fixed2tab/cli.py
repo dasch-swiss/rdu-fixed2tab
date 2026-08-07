@@ -56,6 +56,23 @@ examples
               --report geometry.txt --rejected skipped.txt \\
               --columns '1-12:DATE,18-27:BEST_TIME,31-37:DELTAT_s'
 
+when a column comes out named colN
+----------------------------------
+  Some files put one heading above several columns — "Jewish Date Scheme" over a
+  year, a month and a day, say. The heading overlaps only one of them, so the
+  others are named col5, col7 and so on, and a warning says which. The data is
+  correct; only the names are unhelpful.
+
+  Repeated headings are suffixed with the column index instead: two "Hsun"
+  columns become Hsun and Hsun_7.
+
+  Fix either by naming the columns yourself. Copy the --columns line from the
+  report and add or edit the names after each range:
+
+    --columns '54-57:Jewish_year,63-74:Jewish_month,80-81:Jewish_day'
+
+  A name you write always wins over one derived from the heading.
+
 outputs
 -------
   All three are written on every successful run, so that
