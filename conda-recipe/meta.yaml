@@ -34,7 +34,7 @@ build:
   # name-version-build, so rebuilding without a bump reinstalls the previous
   # package silently -- even with --force-reinstall. The conda-forge submission
   # resets this to 0, since there the version always changes.
-  number: 1
+  number: 2
   script: {{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
   entry_points:
     - fixed2tab = fixed2tab.cli:main
