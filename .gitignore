@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Conda build artefacts
+conda-bld/
+*.conda
+*.tar.bz2
+
+# Large reference data — the 6.4 MB golden file lives outside the repo
+# (Zenodo deposit); the golden test skips when it is absent.
+Thebenletzte.txt
+Thebenletzte.tsv
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,60 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fixed2tab"
+dynamic = ["version"]
+description = "Convert fixed-width text files to tabular (TSV), detecting column boundaries automatically"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Rita Gautschy", email = "rita.gautschy@dasch.swiss" }]
+keywords = ["fixed-width", "tabular", "tsv", "galaxy", "text-processing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Text Processing :: Filters",
+    "Topic :: Scientific/Engineering",
+]
+
+# Standard library only. This is load-bearing: it keeps the conda recipe
+# `noarch: python` with no dependencies, which is what makes conda-forge review fast.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/dasch-swiss/rdu-fixed2tab"
+Repository = "https://github.com/dasch-swiss/rdu-fixed2tab"
+
+# Entry point, not `scripts=`. `noarch: python` forbids the latter.
+[project.scripts]
+fixed2tab = "fixed2tab.cli:main"
+
+# Dev dependencies as an extra rather than a PEP 735 dependency-group: `.[dev]`
+# resolves under pip, uv and CI alike, whereas a dependency-group is silently
+# ignored by `pip install .[dev]` and installs nothing.
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+# Single source of truth for the version. It is written in exactly one place;
+# the conda recipe and the Galaxy macros.xml both derive from the released value.
+[tool.hatch.version]
+path = "src/fixed2tab/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fixed2tab"]
+
+[tool.hatch.build.targets.sdist]
+# Tests ship in the sdist for downstream verification but are not a top-level
+# package in the installed distribution — a conda-forge reviewer check.
+include = ["src/", "tests/", "test-data/", "LICENSE", "README.md", "pyproject.toml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "req(id): the PRD requirement this test exercises, e.g. @pytest.mark.req('REQ-1.2')",
+]
