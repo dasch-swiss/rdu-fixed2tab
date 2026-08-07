@@ -10,10 +10,20 @@ the reference file and a paginated variant of it.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import re
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
-__all__ = ["Preamble", "build_preamble", "collect_preamble"]
+from fixed2tab.model import Diagnostic, Field
+
+__all__ = [
+    "Preamble",
+    "build_preamble",
+    "collect_preamble",
+    "name_fields",
+    "sanitise",
+    "tokenize",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,3 +99,130 @@ def collect_preamble(
             break
         collected.append((number, text))
     return build_preamble(collected, header_line)
+
+
+def tokenize(header: str) -> tuple[tuple[int, int, str], ...]:
+    """Maximal runs of non-blank characters, as 1-based inclusive spans."""
+    tokens: list[tuple[int, int, str]] = []
+    start: int | None = None
+    for i, ch in enumerate(header):
+        if ch != " " and start is None:
+            start = i
+        elif ch == " " and start is not None:
+            tokens.append((start + 1, i, header[start:i]))
+            start = None
+    if start is not None:
+        tokens.append((start + 1, len(header), header[start:]))
+    return tuple(tokens)
+
+
+def sanitise(name: str) -> str:
+    """Reduce a derived name to identifier-safe characters.
+
+    Every maximal run outside ``[A-Za-z0-9_]`` collapses to a single underscore,
+    then leading and trailing underscores are removed. Replace-and-strip is what
+    turns ``DELTAT[s]`` into ``DELTAT_s``; dropping the offending characters
+    would give ``DELTATs`` and substituting one-for-one would give ``DELTAT_s_``.
+    """
+    return re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_")
+
+
+def name_fields(
+    fields: Sequence[Field], header: str | None
+) -> tuple[tuple[Field, ...], list[Diagnostic]]:
+    """Name each field from the header tokens whose spans overlap it (REQ-5.1).
+
+    Overlap, not slicing. Header labels are not positioned to line up with the
+    data beneath them, so cutting the header at the field boundaries mangles it:
+    on the reference file that corrupts five names of eleven, yielding
+    ``ELTAT[s``, ``gyptian Date``, ``Moon``, ``od`` and ``NEW MOON DA``. Taking
+    every token that *overlaps* the field recovers all eleven, and correctly
+    splits a single label such as ``NEW MOON DATE & TIME`` across the two
+    columns it actually spans.
+    """
+    diagnostics: list[Diagnostic] = []
+
+    if header is None:
+        named = tuple(
+            Field(f.start, f.end, f"col{i}") for i, f in enumerate(fields, start=1)
+        )
+        diagnostics.append(
+            Diagnostic(
+                "no-header",
+                "no header line was identified; columns are named positionally.",
+            )
+        )
+        return named, diagnostics
+
+    tokens = tokenize(header)
+    used: set[int] = set()
+    named: list[Field] = []
+
+    for index, f in enumerate(fields, start=1):
+        hits = [
+            (i, tok)
+            for i, tok in enumerate(tokens)
+            if not (tok[1] < f.start or tok[0] > f.end)
+        ]
+        used.update(i for i, _ in hits)
+        raw = "_".join(tok[2] for _, tok in hits)
+        name = sanitise(raw)
+        if not hits:
+            # Checked before the empty-name branch below, which would otherwise
+            # always catch this case first and report the vaguer message. A
+            # field with no overlapping token is guaranteed on the reference
+            # file's shape: the header is 121 characters against 128-character
+            # records, so anything past position 121 overlaps nothing.
+            name = f"col{index}"
+            diagnostics.append(
+                Diagnostic(
+                    "field-unnamed",
+                    f"field {f.start}-{f.end} overlaps no header token; "
+                    f"using {name!r}.",
+                )
+            )
+        elif not name or name[0].isdigit():
+            # A name starting with a digit is not a usable identifier for many
+            # downstream tools, and an empty one is no name at all.
+            name = f"col{index}" if not name else f"col{index}_{name}"
+            diagnostics.append(
+                Diagnostic(
+                    "name-unusable",
+                    f"field {f.start}-{f.end} derived an empty or digit-initial "
+                    f"name from {raw!r}; using {name!r}.",
+                )
+            )
+        named.append(Field(f.start, f.end, name))
+
+    orphans = [tok[2] for i, tok in enumerate(tokens) if i not in used]
+    if orphans:
+        diagnostics.append(
+            Diagnostic(
+                "header-token-discarded",
+                f"header token(s) {', '.join(repr(o) for o in orphans)} overlap no "
+                "field and were discarded.",
+            )
+        )
+
+    # Disambiguate collisions only after every name is known, so the suffix
+    # reflects the field's real position rather than the order they were found.
+    seen: dict[str, int] = {}
+    final: list[Field] = []
+    duplicates: list[str] = []
+    for index, f in enumerate(named, start=1):
+        assert f.name is not None
+        if f.name in seen:
+            duplicates.append(f.name)
+            final.append(Field(f.start, f.end, f"{f.name}_{index}"))
+        else:
+            seen[f.name] = index
+            final.append(f)
+    if duplicates:
+        diagnostics.append(
+            Diagnostic(
+                "duplicate-names",
+                f"duplicate column name(s) {', '.join(sorted(set(duplicates)))} "
+                "were suffixed with the field index.",
+            )
+        )
+    return tuple(final), diagnostics
