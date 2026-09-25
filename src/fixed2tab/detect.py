@@ -416,6 +416,17 @@ def classify_input(
             rejected.append(RejectedLine(number, text, reason))
             continue
         assert record is not None
+        if "\t" in record:
+            # Checked here in pass 2, before any output file is opened, so a
+            # fatal TAB leaves no truncated table behind for a later step to
+            # consume as if it were complete.
+            raise InputError(
+                f"line {number} contains a TAB. Fixed-width input must not, "
+                "because emitting it would shift every later column in the "
+                "output and corrupt the table silently. If this file came "
+                "through a Galaxy upload, check that 'convert spaces to "
+                "tabs' was not applied."
+            )
         if before < record_width:
             padded += 1
         n_records += 1

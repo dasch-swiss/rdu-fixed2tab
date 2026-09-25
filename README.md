@@ -19,7 +19,7 @@ $ fixed2tab --input observations.txt \
             --rejected skipped.txt
 ```
 
-Every run writes three files. The table is the data; the report shows the
+Every successful run writes three files. The table is the data; the report shows the
 detected geometry and how to correct it; the rejected file contains every line
 that was not parsed, verbatim and numbered. Input line count always equals table
 rows plus rejected lines, so nothing can disappear unnoticed.

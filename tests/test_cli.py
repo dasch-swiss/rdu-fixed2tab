@@ -154,14 +154,6 @@ def test_no_records_exits_input_error(tmp_path):
     assert status == ExitCode.INPUT
 
 
-@pytest.mark.req("REQ-0.12")
-def test_tab_in_a_record_is_fatal(tmp_path):
-    f = tmp_path / "tabbed.txt"
-    f.write_text("heading here\naaa 11\tbb 22\naaa 11 bb 222\n", encoding="ascii")
-    status, *_ = convert(tmp_path, f)
-    assert status in (ExitCode.INPUT, ExitCode.SUCCESS)  # fatal when it is a record
-
-
 @pytest.mark.req("REQ-3.4")
 def test_strict_trips_on_a_disallowed_reason(tmp_path, clean):
     allowed, *_ = convert(tmp_path, clean, "--strict", prefix="allowed")
@@ -288,18 +280,24 @@ def test_undecodable_input_exits_input_error_naming_the_line(tmp_path, capsys):
 
 
 @pytest.mark.req("REQ-0.12")
-def test_tab_in_a_record_is_fatal_with_a_pointed_message(tmp_path, capsys):
+def test_tab_in_a_record_is_fatal(tmp_path, capsys):
+    """Fatal, pointed, and before any output exists.
+
+    The tabbed line is padded to the record width and carries digits, so it
+    passes every classification criterion: it is provably a record, and only
+    the TAB guard can stop it.
+    """
     good = "aaa 111  bbb 22"
-    tabbed = "aaa 111\tbbb 22"
+    tabbed = "aaa 111\tbbb 22".ljust(len(good))
     f = tmp_path / "tabbed.txt"
-    f.write_text(
-        "heading\n" + "\n".join([good, good, tabbed.ljust(len(good)), good]) + "\n",
-        encoding="ascii",
-    )
-    status, *_ = convert(tmp_path, f)
+    f.write_text(f"heading\n{good}\n{good}\n{tabbed}\n{good}\n", encoding="ascii")
+    status, table, report, rejected = convert(tmp_path, f)
+    assert status == ExitCode.INPUT
     err = capsys.readouterr().err
-    if status == ExitCode.INPUT:
-        assert "TAB" in err and "convert spaces to tabs" in err
+    assert "line 4" in err
+    assert "TAB" in err and "convert spaces to tabs" in err
+    # No truncated table for a later pipeline step to mistake for a result.
+    assert not any(p.exists() for p in (table, report, rejected))
 
 
 @pytest.mark.req("REQ-4.11")

@@ -22,7 +22,6 @@ from fixed2tab.model import (
     Counts,
     Field,
     Geometry,
-    InputError,
     RejectReason,
 )
 
@@ -154,14 +153,6 @@ def write_outputs(
                 rejects += 1
                 continue
             assert record is not None
-            if "\t" in record:
-                raise InputError(
-                    f"line {number} contains a TAB. Fixed-width input must not, "
-                    "because emitting it would shift every later column in the "
-                    "output and corrupt the table silently. If this file came "
-                    "through a Galaxy upload, check that 'convert spaces to "
-                    "tabs' was not applied."
-                )
             cells = carve_cells(record, geometry.fields, collapse)
             for i, cell in enumerate(cells):
                 if not cell:
