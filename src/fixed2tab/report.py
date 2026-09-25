@@ -48,10 +48,19 @@ def render_report(
         out.append(f"  {key:<16} {parameters[key]}")
 
     out += _section("Input")
-    out.append(f"  record width     {profile.record_width}")
+    # The effective width, which is what the columns below are carved from.
+    # Printing the detected one after a --record-width override made the report
+    # contradict its own column table.
+    width = geometry.record_width
+    stated = (
+        f"{width}"
+        if width == profile.record_width
+        else (f"{width} (detected {profile.record_width})")
+    )
+    out.append(f"  record width     {stated}")
     out.append(
-        f"  lines at width   {counts.input_lines and stats.rows} records, "
-        f"{profile.width_share:.1%} of {profile.total_lines} lines"
+        f"  lines at width   {profile.lines_at(width)} of {profile.total_lines} lines "
+        f"({profile.share_at(width):.1%})"
     )
     if profile.tied_lengths:
         out.append(

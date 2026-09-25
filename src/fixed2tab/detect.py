@@ -109,13 +109,18 @@ class LengthProfile:
     record_width: int
     tied_lengths: tuple[int, ...] = ()
 
+    def lines_at(self, width: int) -> int:
+        """How many lines have exactly ``width`` characters."""
+        return dict(self.histogram).get(width, 0)
+
+    def share_at(self, width: int) -> float:
+        """Fraction of lines having exactly ``width`` characters."""
+        return self.lines_at(width) / self.total_lines if self.total_lines else 0.0
+
     @property
     def width_share(self) -> float:
         """Fraction of lines having the detected record width."""
-        if not self.total_lines:
-            return 0.0
-        counts = dict(self.histogram)
-        return counts.get(self.record_width, 0) / self.total_lines
+        return self.share_at(self.record_width)
 
     @property
     def looks_right_trimmed(self) -> bool:

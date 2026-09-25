@@ -439,6 +439,9 @@ def test_right_trimmed_workflow_recovers_every_row(tmp_path, trimmed):
     text = report.read_text()
     assert f"header           {TRIMMED_HEADING!r}" in text
     assert "padding-and-preamble" in text
+    # The stated width and share are the effective ones the columns use.
+    assert "record width     19 (detected 13)" in text
+    assert "lines at width   1 of 9 lines (11.1%)" in text
 
 
 @pytest.mark.req("REQ-0.7b")

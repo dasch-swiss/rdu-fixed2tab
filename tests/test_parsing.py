@@ -159,7 +159,10 @@ def test_all_zero_record_survives(tmp_path):
     class of silent, biased loss that thresholded gutter detection caused.
     """
     f = tmp_path / "zeros.txt"
-    rows = ["  0     0       0.0      0" + " " * 10] * 4
+    # Exactly two distinct characters, so the distinct-character test alone
+    # *would* reject it; only the no-digits half of the rule saves it.
+    rows = ["  0     0       0" + " " * 10] * 4
+    assert len(set(rows[0].strip(" "))) == 2
     f.write_text("HEADING\n" + "\n".join(rows) + "\n", encoding="ascii")
     _p, classified, _n, _r, _x = geometry_of(f)
     assert classified.counts.table_rows == 4
