@@ -155,13 +155,22 @@ def test_no_records_exits_input_error(tmp_path):
 
 
 @pytest.mark.req("REQ-3.4")
-def test_strict_trips_on_a_disallowed_reason(tmp_path, clean):
-    allowed, *_ = convert(tmp_path, clean, "--strict", prefix="allowed")
-    assert allowed == ExitCode.SUCCESS
+def test_strict_trips_on_a_disallowed_reason(tmp_path, clean, capsys):
+    """--strict alone fails on any rejection; --allow-rejects relaxes it.
+
+    The clean fixture rejects its two preamble lines, both as ``length``.
+    """
+    bare, *_ = convert(tmp_path, clean, "--strict", prefix="bare")
+    assert bare == ExitCode.STRICT
+    assert "2 line(s) rejected as length" in capsys.readouterr().err
     tripped, *_ = convert(
         tmp_path, clean, "--strict", "--allow-rejects", "rule-line", prefix="tripped"
     )
     assert tripped == ExitCode.STRICT
+    allowed, *_ = convert(
+        tmp_path, clean, "--strict", "--allow-rejects", "length", prefix="allowed"
+    )
+    assert allowed == ExitCode.SUCCESS
 
 
 @pytest.mark.req("REQ-3.7")

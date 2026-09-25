@@ -300,15 +300,19 @@ def build_parser() -> argparse.ArgumentParser:
     strict.add_argument(
         "--strict",
         action="store_true",
-        help="exit non-zero if any line is rejected for a reason not in --allow-rejects",
+        help="exit 4 if any line is rejected, except for the reasons listed in --allow-rejects",
     )
     strict.add_argument(
         "--allow-rejects",
         metavar="R",
         nargs="*",
         choices=RejectReason.names(),
-        default=list(RejectReason.names()),
-        help=f"rejection reasons tolerated under --strict (default: all). One or more of: {', '.join(RejectReason.names())}",
+        # Empty, so that --strict on its own is strict. Defaulting to every
+        # reason made the bare flag inert: it could never trip, and the
+        # safe-looking invocation was the one that did nothing.
+        default=[],
+        help="rejection reasons tolerated under --strict (default: none). One or more "
+        f"of: {', '.join(RejectReason.names())}",
     )
     return parser
 
