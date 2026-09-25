@@ -98,11 +98,6 @@ class RejectReason(Enum):
     RULE_LINE = "rule-line"
 
     @classmethod
-    def evaluation_order(cls) -> tuple[RejectReason, ...]:
-        """The criteria in the order they are applied (REQ-2.6)."""
-        return tuple(cls)
-
-    @classmethod
     def names(cls) -> tuple[str, ...]:
         """Every reason value, including ones with zero occurrences (REQ-2.7)."""
         return tuple(r.value for r in cls)
@@ -177,7 +172,6 @@ class Geometry:
     fields: tuple[Field, ...]
     blank_runs: tuple[BlankRun, ...] = ()
     min_gutter: int = 2
-    detected: bool = True  # False when the user supplied --columns
 
     def __post_init__(self) -> None:
         if self.record_width < 1:

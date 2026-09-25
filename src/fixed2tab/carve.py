@@ -10,14 +10,19 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from fixed2tab.detect import LineSource, ShortLinePolicy, classify_line
+from fixed2tab.detect import (
+    LineSource,
+    ShortLinePolicy,
+    classify_line,
+    preamble_continues,
+    preamble_reason,
+)
 from fixed2tab.header import Preamble
 from fixed2tab.model import (
     Counts,
     Field,
     Geometry,
     InputError,
-    RejectedLine,
     RejectReason,
 )
 
@@ -92,17 +97,10 @@ def iter_classified(
     out.
     """
     in_preamble = True
-    preamble_numbers = {n for n, _ in preamble.lines}
     for number, text in source:
         if in_preamble:
-            still = number <= header_line if header_line is not None else number in preamble_numbers
-            if still:
-                reason: RejectReason | None = (
-                    RejectReason.LENGTH
-                    if len(text) != record_width
-                    else RejectReason.PREAMBLE_IDENTITY
-                )
-                yield number, text, None, reason
+            if preamble_continues(number, text, record_width, header_line):
+                yield number, text, None, preamble_reason(text, record_width)
                 continue
             in_preamble = False
         record, reason = classify_line(
@@ -181,20 +179,3 @@ def write_outputs(
         FieldStats(tuple(blank_counts), tuple(samples), rows),
         by_reason,
     )
-
-
-def rejected_line_records(
-    source: LineSource,
-    record_width: int,
-    preamble: Preamble,
-    short_policy: str = ShortLinePolicy.DEFAULT,
-    header_line: int | None = None,
-) -> list[RejectedLine]:
-    """Every rejected line, for callers that need them in memory (tests)."""
-    return [
-        RejectedLine(number, text, reason)
-        for number, text, _record, reason in iter_classified(
-            source, record_width, preamble, short_policy, header_line
-        )
-        if reason is not None
-    ]

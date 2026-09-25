@@ -474,7 +474,7 @@ def run(args: argparse.Namespace) -> int:
             )
         )
 
-    geometry = Geometry(width, named, runs, args.min_gutter, detected)
+    geometry = Geometry(width, named, runs, args.min_gutter)
 
     counts, stats, by_reason = write_outputs(
         source,

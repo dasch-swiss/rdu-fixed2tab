@@ -11,7 +11,7 @@ the reference file and a paginated variant of it.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from fixed2tab.model import Diagnostic, Field
@@ -19,7 +19,6 @@ from fixed2tab.model import Diagnostic, Field
 __all__ = [
     "Preamble",
     "build_preamble",
-    "collect_preamble",
     "name_fields",
     "sanitise",
     "tokenize",
@@ -54,10 +53,6 @@ class Preamble:
         """
         return frozenset(text.rstrip(" ") for _n, text in self.lines)
 
-    @property
-    def header_line_number(self) -> int | None:
-        return self.lines[-1][0] if self.lines else None
-
 
 def build_preamble(
     collected: list[tuple[int, str]],
@@ -76,29 +71,6 @@ def build_preamble(
         if chosen is not None:
             return Preamble(tuple(collected), chosen)
     return Preamble(tuple(collected), collected[-1][1])
-
-
-def collect_preamble(
-    numbered_lines: Iterable[tuple[int, str]],
-    record_width: int,
-    header_line: int | None = None,
-) -> Preamble:
-    """Leading lines whose length differs from the record width (REQ-0.7).
-
-    Length equality is exact here even when ``--short-lines pad`` is active. If
-    padding were applied first, the reference file's 37-character title and
-    121-character heading would both pad out to 128, become records, and be
-    carved as data — losing the header entirely. Padding is therefore a repair
-    for lines *after* the preamble boundary, never a way into it.
-
-    Consumes only the leading lines, so it is safe on a large file.
-    """
-    collected: list[tuple[int, str]] = []
-    for number, text in numbered_lines:
-        if len(text) == record_width:
-            break
-        collected.append((number, text))
-    return build_preamble(collected, header_line)
 
 
 def tokenize(header: str) -> tuple[tuple[int, int, str], ...]:

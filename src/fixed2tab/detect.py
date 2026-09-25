@@ -41,6 +41,8 @@ __all__ = [
     "derive_fields",
     "detect_record_width",
     "has_control_char",
+    "preamble_continues",
+    "preamble_reason",
     "profile_lengths",
 ]
 
@@ -307,11 +309,45 @@ class ClassifiedInput:
     rejected: tuple[RejectedLine, ...]
     counts: Counts
     blank: tuple[bool, ...] = ()
-    padded_lines: int = 0
 
     @property
     def by_reason(self) -> dict[str, int]:
         return count_by_reason(self.rejected)
+
+
+def preamble_continues(number: int, text: str, record_width: int, header_line: int | None) -> bool:
+    """Whether line ``number`` still belongs to the preamble (REQ-0.7).
+
+    The single definition of the preamble boundary. Pass 2 and pass 3 both call
+    it, so the two cannot disagree about where the data starts.
+
+    Without ``--header-line`` the preamble is the leading lines whose length
+    differs from the record width. Length equality is exact even when
+    ``--short-lines pad`` is active: if padding were applied first, the
+    reference file's 37-character title and 121-character heading would both
+    pad out to 128, become records, and be carved as data — losing the header
+    entirely. Padding is a repair for lines *after* the boundary, never a way
+    into it.
+
+    An explicit ``--header-line`` ends the preamble *at that line*, regardless
+    of its length. Without this the flag is not the escape hatch REQ-0.7b
+    claims: a heading that happens to match the record width never enters the
+    preamble, so it is carved as a data row and there is no way to say
+    otherwise.
+    """
+    if header_line is not None:
+        return number <= header_line
+    return len(text) != record_width
+
+
+def preamble_reason(text: str, record_width: int) -> RejectReason:
+    """The reason a preamble line is reported under in the rejected file.
+
+    A forced preamble line may legitimately be record-width — that is the case
+    ``--header-line`` exists for — so attribute by what is true of the line
+    rather than assuming a length mismatch.
+    """
+    return RejectReason.LENGTH if len(text) != record_width else RejectReason.PREAMBLE_IDENTITY
 
 
 def classify_input(
@@ -343,31 +379,9 @@ def classify_input(
         total += 1
 
         if in_preamble:
-            # An explicit --header-line extends the preamble through that line
-            # regardless of its length. Without this the flag is not the escape
-            # hatch REQ-0.7b claims: a heading that happens to match the record
-            # width never enters the preamble, so it is carved as a data row and
-            # there is no way to say otherwise.
-            # With --header-line the preamble ends *at that line*. Anchoring on
-            # the first record-width line instead does not work: under
-            # --short-lines pad the records are shorter than the width, so no
-            # line matches exactly and everything stays in the preamble. An
-            # earlier version of this fix extended the preamble without moving
-            # the boundary and produced zero records.
-            still_preamble = (
-                number <= header_line if header_line is not None else len(text) != record_width
-            )
-            if still_preamble:
+            if preamble_continues(number, text, record_width, header_line):
                 preamble_acc.append((number, text))
-                # A forced preamble line may legitimately be record-width — that
-                # is the case --header-line exists for — so attribute by what is
-                # true of the line rather than assuming a length mismatch.
-                forced = (
-                    RejectReason.LENGTH
-                    if len(text) != record_width
-                    else RejectReason.PREAMBLE_IDENTITY
-                )
-                rejected.append(RejectedLine(number, text, forced))
+                rejected.append(RejectedLine(number, text, preamble_reason(text, record_width)))
                 continue
             in_preamble = False
             preamble = build_preamble(preamble_acc, header_line)
@@ -415,7 +429,7 @@ def classify_input(
     if not n_records:
         diagnostics.append(Diagnostic("no-records", "no line was classified as a record."))
     return (
-        ClassifiedInput(preamble, tuple(rejected), counts, tuple(blank), padded),
+        ClassifiedInput(preamble, tuple(rejected), counts, tuple(blank)),
         diagnostics,
     )
 
