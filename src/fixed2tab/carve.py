@@ -17,8 +17,8 @@ from fixed2tab.model import (
     Field,
     Geometry,
     InputError,
-    RejectReason,
     RejectedLine,
+    RejectReason,
 )
 
 __all__ = ["FieldStats", "HeaderMode", "carve_cells", "write_outputs"]
@@ -58,9 +58,7 @@ class HeaderMode:
     DEFAULT = NONE
 
 
-def carve_cells(
-    record: str, fields: tuple[Field, ...], collapse: bool = False
-) -> list[str]:
+def carve_cells(record: str, fields: tuple[Field, ...], collapse: bool = False) -> list[str]:
     """Extract one row of cells from a record.
 
     Cells are verbatim substrings with leading and trailing spaces removed and
@@ -97,13 +95,9 @@ def iter_classified(
     preamble_numbers = {n for n, _ in preamble.lines}
     for number, text in source:
         if in_preamble:
-            still = (
-                number <= header_line
-                if header_line is not None
-                else number in preamble_numbers
-            )
+            still = number <= header_line if header_line is not None else number in preamble_numbers
             if still:
-                reason = (
+                reason: RejectReason | None = (
                     RejectReason.LENGTH
                     if len(text) != record_width
                     else RejectReason.PREAMBLE_IDENTITY

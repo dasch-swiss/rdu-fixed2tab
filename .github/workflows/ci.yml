@@ -24,6 +24,19 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest -q
 
+  lint:
+    name: ruff and mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests
+      - run: ruff format --check src tests
+      - run: mypy src/fixed2tab
+
   package:
     name: build and packaging checks
     runs-on: ubuntu-latest

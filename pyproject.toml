@@ -38,7 +38,7 @@ fixed2tab = "fixed2tab.cli:main"
 # resolves under pip, uv and CI alike, whereas a dependency-group is silently
 # ignored by `pip install .[dev]` and installs nothing.
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
 
 # Single source of truth for the version. It is written in exactly one place;
 # the conda recipe and the Galaxy macros.xml both derive from the released value.
@@ -59,3 +59,15 @@ pythonpath = ["tests"]
 markers = [
     "req(id): the PRD requirement this test exercises, e.g. @pytest.mark.req('REQ-1.2')",
 ]
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+extend-select = ["I", "RUF"]
+# The report and --help use typographic characters on purpose (×, —, ·); the
+# ambiguous-unicode rules would flag every one of them.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.mypy]
+strict = true

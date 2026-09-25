@@ -58,9 +58,10 @@ def render_report(
             f"  length tie       {', '.join(str(t) for t in profile.tied_lengths)} "
             "(chose the greatest)"
         )
-    out.append("  line lengths     " + ", ".join(
-        f"{length}×{count}" for length, count in profile.histogram[:8]
-    ))
+    out.append(
+        "  line lengths     "
+        + ", ".join(f"{length}×{count}" for length, count in profile.histogram[:8])
+    )
     if preamble.lines:
         out.append(f"  preamble         {len(preamble.lines)} line(s)")
         out.append(f"  header           {preamble.header!r}")
@@ -96,9 +97,7 @@ def render_report(
         f"  runs of at least {geometry.min_gutter} blank positions separate columns; "
         "narrower runs sit inside one"
     )
-    out.append(
-        "  " + " ".join(f"{r.start}-{r.end}({r.width})" for r in geometry.blank_runs)
-    )
+    out.append("  " + " ".join(f"{r.start}-{r.end}({r.width})" for r in geometry.blank_runs))
 
     out += _section("Reproducing or correcting this geometry")
     out.append("  Pass the following back to get exactly this table again, or edit")

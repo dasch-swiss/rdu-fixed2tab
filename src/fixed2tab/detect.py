@@ -22,10 +22,10 @@ from fixed2tab.model import (
     BlankRun,
     Counts,
     Diagnostic,
-    InputError,
-    RejectReason,
     Field,
+    InputError,
     RejectedLine,
+    RejectReason,
     UsageError,
     count_by_reason,
 )
@@ -35,8 +35,8 @@ __all__ = [
     "LengthProfile",
     "LineSource",
     "ShortLinePolicy",
-    "classify_input",
     "blank_runs",
+    "classify_input",
     "classify_line",
     "derive_fields",
     "detect_record_width",
@@ -240,7 +240,7 @@ def profile_lengths(source: LineSource) -> tuple[LengthProfile, list[Diagnostic]
                 "which is the signature of a file whose trailing blanks were "
                 f"stripped. Records shorter than the detected width will be "
                 "REJECTED, not padded. To parse this file, pass "
-f"--record-width {profile.max_length} --short-lines pad.",
+                f"--record-width {profile.max_length} --short-lines pad.",
             )
         )
     return profile, diagnostics
@@ -276,11 +276,7 @@ def classify_line(
     thresholded earlier design silently discarded every intercalary-day record.
     """
     if len(text) != record_width:
-        if (
-            short_policy == ShortLinePolicy.PAD
-            and past_preamble
-            and len(text) < record_width
-        ):
+        if short_policy == ShortLinePolicy.PAD and past_preamble and len(text) < record_width:
             text = text.ljust(record_width)
         else:
             return None, RejectReason.LENGTH
@@ -359,21 +355,19 @@ def classify_input(
             # earlier version of this fix extended the preamble without moving
             # the boundary and produced zero records.
             still_preamble = (
-                number <= header_line
-                if header_line is not None
-                else len(text) != record_width
+                number <= header_line if header_line is not None else len(text) != record_width
             )
             if still_preamble:
                 preamble_acc.append((number, text))
                 # A forced preamble line may legitimately be record-width — that
                 # is the case --header-line exists for — so attribute by what is
                 # true of the line rather than assuming a length mismatch.
-                reason = (
+                forced = (
                     RejectReason.LENGTH
                     if len(text) != record_width
                     else RejectReason.PREAMBLE_IDENTITY
                 )
-                rejected.append(RejectedLine(number, text, reason))
+                rejected.append(RejectedLine(number, text, forced))
                 continue
             in_preamble = False
             preamble = build_preamble(preamble_acc, header_line)
@@ -397,9 +391,7 @@ def classify_input(
         # No line ever matched the record width: everything is preamble.
         preamble = build_preamble(preamble_acc, header_line)
 
-    counts = Counts(
-        input_lines=total, table_rows=n_records, rejected_lines=len(rejected)
-    )
+    counts = Counts(input_lines=total, table_rows=n_records, rejected_lines=len(rejected))
 
     diagnostics: list[Diagnostic] = []
     if padded:
@@ -421,9 +413,7 @@ def classify_input(
                 )
             )
     if not n_records:
-        diagnostics.append(
-            Diagnostic("no-records", "no line was classified as a record.")
-        )
+        diagnostics.append(Diagnostic("no-records", "no line was classified as a record."))
     return (
         ClassifiedInput(preamble, tuple(rejected), counts, tuple(blank), padded),
         diagnostics,

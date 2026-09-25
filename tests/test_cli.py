@@ -16,10 +16,14 @@ def convert(tmp_path, source, *extra, prefix="out"):
     rejected = tmp_path / f"{prefix}.rejected.txt"
     status = main(
         [
-            "--input", str(source),
-            "--table", str(table),
-            "--report", str(report),
-            "--rejected", str(rejected),
+            "--input",
+            str(source),
+            "--table",
+            str(table),
+            "--report",
+            str(report),
+            "--rejected",
+            str(rejected),
             *extra,
         ]
     )
@@ -288,7 +292,10 @@ def test_tab_in_a_record_is_fatal_with_a_pointed_message(tmp_path, capsys):
     good = "aaa 111  bbb 22"
     tabbed = "aaa 111\tbbb 22"
     f = tmp_path / "tabbed.txt"
-    f.write_text("heading\n" + "\n".join([good, good, tabbed.ljust(len(good)), good]) + "\n", encoding="ascii")
+    f.write_text(
+        "heading\n" + "\n".join([good, good, tabbed.ljust(len(good)), good]) + "\n",
+        encoding="ascii",
+    )
     status, *_ = convert(tmp_path, f)
     err = capsys.readouterr().err
     if status == ExitCode.INPUT:
@@ -335,8 +342,12 @@ def test_collapse_spaces_is_opt_in_and_global(tmp_path, clean):
     _s2, collapsed, _r2, _j2 = convert(tmp_path, clean, "--collapse-spaces", prefix="collapsed")
     # Asserted as a property rather than on one hand-picked cell: some cell must
     # carry a run of two spaces when off, and none may when on.
-    verbatim_cells = [c for row in verbatim.read_text().rstrip("\n").split("\n") for c in row.split("\t")]
-    collapsed_cells = [c for row in collapsed.read_text().rstrip("\n").split("\n") for c in row.split("\t")]
+    verbatim_cells = [
+        c for row in verbatim.read_text().rstrip("\n").split("\n") for c in row.split("\t")
+    ]
+    collapsed_cells = [
+        c for row in collapsed.read_text().rstrip("\n").split("\n") for c in row.split("\t")
+    ]
     assert any("  " in c for c in verbatim_cells), "fixture has no multi-space cell to test"
     assert not any("  " in c for c in collapsed_cells)
     # and the collapse is only whitespace: the tokens themselves are untouched

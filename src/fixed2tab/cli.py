@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import codecs
+import itertools
 import re
 import sys
 from pathlib import Path
@@ -139,8 +140,7 @@ def parse_columns(spec: str, record_width: int) -> tuple[Field, ...]:
             )
         if end > record_width:
             raise UsageError(
-                f"--columns element {element!r} extends past the record width "
-                f"of {record_width}"
+                f"--columns element {element!r} extends past the record width of {record_width}"
             )
         fields.append(Field(start, end, name))
 
@@ -148,11 +148,10 @@ def parse_columns(spec: str, record_width: int) -> tuple[Field, ...]:
         raise UsageError("--columns is empty")
 
     ordered = sorted(fields, key=lambda f: f.start)
-    for left, right in zip(ordered, ordered[1:]):
+    for left, right in itertools.pairwise(ordered):
         if right.start <= left.end:
             raise UsageError(
-                f"--columns ranges {left.start}-{left.end} and "
-                f"{right.start}-{right.end} overlap"
+                f"--columns ranges {left.start}-{left.end} and {right.start}-{right.end} overlap"
             )
     return tuple(fields)
 
@@ -224,27 +223,91 @@ def build_parser() -> argparse.ArgumentParser:
     io_group = parser.add_argument_group("input and outputs (all required)")
     io_group.add_argument("--input", required=True, type=Path, help="fixed-width text file to read")
     io_group.add_argument("--table", required=True, type=Path, help="TSV output")
-    io_group.add_argument("--report", required=True, type=Path, help="geometry report; read this when a boundary looks wrong")
-    io_group.add_argument("--rejected", required=True, type=Path, help="every unparsed line, verbatim, with its input line number")
+    io_group.add_argument(
+        "--report",
+        required=True,
+        type=Path,
+        help="geometry report; read this when a boundary looks wrong",
+    )
+    io_group.add_argument(
+        "--rejected",
+        required=True,
+        type=Path,
+        help="every unparsed line, verbatim, with its input line number",
+    )
 
     geo = parser.add_argument_group("geometry")
-    geo.add_argument("--columns", metavar="SPEC", help="explicit columns, e.g. '1-12:DATE,18-27:BEST_TIME'; overrides detection. Positions are 1-based inclusive")
-    geo.add_argument("--widths", metavar="SPEC", help="explicit column widths instead of ranges, e.g. '2x,5,2x,8' — a FORTRAN FORMAT such as 2X,I5,2X,F8.3 transcribes directly. Nx skips N positions; N:NAME names a column. Mutually exclusive with --columns")
-    geo.add_argument("--min-gutter", type=int, default=2, metavar="N", help="blank positions needed to separate two columns (default: 2). Lower splits inside cells like '4h  6m 22s'; higher merges narrow columns")
-    geo.add_argument("--record-width", type=int, metavar="N", help="override the detected record width, e.g. for a file whose trailing blanks were stripped")
-    geo.add_argument("--header-line", type=int, metavar="N", help="1-based line to use as the column headings; also extends the preamble through that line")
+    geo.add_argument(
+        "--columns",
+        metavar="SPEC",
+        help="explicit columns, e.g. '1-12:DATE,18-27:BEST_TIME'; overrides detection. Positions are 1-based inclusive",
+    )
+    geo.add_argument(
+        "--widths",
+        metavar="SPEC",
+        help="explicit column widths instead of ranges, e.g. '2x,5,2x,8' — a FORTRAN FORMAT such as 2X,I5,2X,F8.3 transcribes directly. Nx skips N positions; N:NAME names a column. Mutually exclusive with --columns",
+    )
+    geo.add_argument(
+        "--min-gutter",
+        type=int,
+        default=2,
+        metavar="N",
+        help="blank positions needed to separate two columns (default: 2). Lower splits inside cells like '4h  6m 22s'; higher merges narrow columns",
+    )
+    geo.add_argument(
+        "--record-width",
+        type=int,
+        metavar="N",
+        help="override the detected record width, e.g. for a file whose trailing blanks were stripped",
+    )
+    geo.add_argument(
+        "--header-line",
+        type=int,
+        metavar="N",
+        help="1-based line to use as the column headings; also extends the preamble through that line",
+    )
 
     read = parser.add_argument_group("reading")
-    read.add_argument("--encoding", default="utf-8", metavar="NAME", help="input encoding (default: utf-8). Try latin-1 for byte-padded legacy output")
-    read.add_argument("--short-lines", choices=ShortLinePolicy.CHOICES, default=ShortLinePolicy.DEFAULT, help="lines shorter than the record width: reject them (default) or pad with spaces. Padding can promote page numbers and footers to data rows, so it is opt-in")
+    read.add_argument(
+        "--encoding",
+        default="utf-8",
+        metavar="NAME",
+        help="input encoding (default: utf-8). Try latin-1 for byte-padded legacy output",
+    )
+    read.add_argument(
+        "--short-lines",
+        choices=ShortLinePolicy.CHOICES,
+        default=ShortLinePolicy.DEFAULT,
+        help="lines shorter than the record width: reject them (default) or pad with spaces. Padding can promote page numbers and footers to data rows, so it is opt-in",
+    )
 
     out = parser.add_argument_group("output shape")
-    out.add_argument("--collapse-spaces", action="store_true", help="reduce runs of spaces inside each cell to one. Off by default. Applies to EVERY cell, so meaningful internal spacing is flattened too: '4h  6m 22s' becomes '4h 6m 22s'. Useful when a range merges several layout columns into one value, such as a date written as year, month and day")
-    out.add_argument("--header", choices=HeaderMode.CHOICES, default=HeaderMode.DEFAULT, help="write column names as the table's first row, or not (default: none). Names always appear in the report")
+    out.add_argument(
+        "--collapse-spaces",
+        action="store_true",
+        help="reduce runs of spaces inside each cell to one. Off by default. Applies to EVERY cell, so meaningful internal spacing is flattened too: '4h  6m 22s' becomes '4h 6m 22s'. Useful when a range merges several layout columns into one value, such as a date written as year, month and day",
+    )
+    out.add_argument(
+        "--header",
+        choices=HeaderMode.CHOICES,
+        default=HeaderMode.DEFAULT,
+        help="write column names as the table's first row, or not (default: none). Names always appear in the report",
+    )
 
     strict = parser.add_argument_group("strictness")
-    strict.add_argument("--strict", action="store_true", help="exit non-zero if any line is rejected for a reason not in --allow-rejects")
-    strict.add_argument("--allow-rejects", metavar="R", nargs="*", choices=RejectReason.names(), default=list(RejectReason.names()), help=f"rejection reasons tolerated under --strict (default: all). One or more of: {', '.join(RejectReason.names())}")
+    strict.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit non-zero if any line is rejected for a reason not in --allow-rejects",
+    )
+    strict.add_argument(
+        "--allow-rejects",
+        metavar="R",
+        nargs="*",
+        choices=RejectReason.names(),
+        default=list(RejectReason.names()),
+        help=f"rejection reasons tolerated under --strict (default: all). One or more of: {', '.join(RejectReason.names())}",
+    )
     return parser
 
 
@@ -286,9 +349,7 @@ def run(args: argparse.Namespace) -> int:
     if enc_note := _encoding_diagnostic(source, len(profile.histogram)):
         diagnostics.append(enc_note)
 
-    classified, class_notes = classify_input(
-        source, width, args.short_lines, args.header_line
-    )
+    classified, class_notes = classify_input(source, width, args.short_lines, args.header_line)
     diagnostics += class_notes
 
     if classified.counts.table_rows == 0:
@@ -401,9 +462,7 @@ def run(args: argparse.Namespace) -> int:
     # a date written as year, month and day. Whitespace cannot express that
     # grouping, so detection splits them and the outer ones end up unnamed. Say
     # so, without pretending to know which ones belong together.
-    headingless = [
-        i + 1 for i, f in enumerate(named) if f.name and re.fullmatch(r"col\d+", f.name)
-    ]
+    headingless = [i + 1 for i, f in enumerate(named) if f.name and re.fullmatch(r"col\d+", f.name)]
     if headingless and classified.preamble.header and detected:
         diagnostics.append(
             Diagnostic(

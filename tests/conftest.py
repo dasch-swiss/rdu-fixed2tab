@@ -21,12 +21,30 @@ REFERENCE_TXT = REPO.parent / "Galaxy-tool" / "Thebenletzte.txt"
 REFERENCE_TSV = REPO.parent / "Galaxy-tool" / "Thebenletzte.tsv"
 
 EXPECTED_RANGES = [
-    (1, 12), (18, 27), (31, 37), (42, 47), (53, 64), (70, 73),
-    (77, 80), (85, 89), (92, 93), (100, 110), (115, 125),
+    (1, 12),
+    (18, 27),
+    (31, 37),
+    (42, 47),
+    (53, 64),
+    (70, 73),
+    (77, 80),
+    (85, 89),
+    (92, 93),
+    (100, 110),
+    (115, 125),
 ]
 EXPECTED_NAMES = [
-    "DATE", "BEST_TIME", "DELTAT_s", "sigma", "Egyptian_Date", "TSun",
-    "TMoon", "q", "code", "NEW_MOON_DATE", "TIME",
+    "DATE",
+    "BEST_TIME",
+    "DELTAT_s",
+    "sigma",
+    "Egyptian_Date",
+    "TSun",
+    "TMoon",
+    "q",
+    "code",
+    "NEW_MOON_DATE",
+    "TIME",
 ]
 
 needs_reference = pytest.mark.skipif(
@@ -61,9 +79,7 @@ def non_blank_positions(path: Path, encoding: str = "utf-8") -> set[int]:
         return set()
     width = Counter(len(ln) for ln in lines).most_common(1)[0][0]
     records = [ln for ln in lines if len(ln) == width]
-    return {
-        i + 1 for i in range(width) if any(rec[i] != " " for rec in records)
-    }
+    return {i + 1 for i in range(width) if any(rec[i] != " " for rec in records)}
 
 
 def covers(fixture: Path, source: Path) -> bool:

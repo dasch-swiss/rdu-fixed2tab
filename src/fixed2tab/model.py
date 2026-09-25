@@ -17,7 +17,6 @@ from enum import Enum, IntEnum
 __all__ = [
     "BlankRun",
     "Counts",
-    "count_by_reason",
     "Diagnostic",
     "ExitCode",
     "Field",
@@ -28,6 +27,7 @@ __all__ = [
     "RejectedLine",
     "StrictViolation",
     "UsageError",
+    "count_by_reason",
 ]
 
 

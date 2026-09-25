@@ -166,23 +166,19 @@ def name_fields(
 
     tokens = tokenize(header)
     used: set[int] = set()
-    named: list[Field] = []
+    derived: list[Field] = []
 
     for index, (f, g) in enumerate(zip(fields, given), start=1):
         if g is not None:
-            named.append(Field(f.start, f.end, sanitise(g)))
+            derived.append(Field(f.start, f.end, sanitise(g)))
             # Still mark the overlapping tokens as used, so a token consumed by
             # an explicitly named field is not reported as discarded.
             used.update(
-                i
-                for i, tok in enumerate(tokens)
-                if not (tok[1] < f.start or tok[0] > f.end)
+                i for i, tok in enumerate(tokens) if not (tok[1] < f.start or tok[0] > f.end)
             )
             continue
         hits = [
-            (i, tok)
-            for i, tok in enumerate(tokens)
-            if not (tok[1] < f.start or tok[0] > f.end)
+            (i, tok) for i, tok in enumerate(tokens) if not (tok[1] < f.start or tok[0] > f.end)
         ]
         used.update(i for i, _ in hits)
         raw = "_".join(tok[2] for _, tok in hits)
@@ -197,8 +193,7 @@ def name_fields(
             diagnostics.append(
                 Diagnostic(
                     "field-unnamed",
-                    f"field {f.start}-{f.end} overlaps no header token; "
-                    f"using {name!r}.",
+                    f"field {f.start}-{f.end} overlaps no header token; using {name!r}.",
                 )
             )
         elif not name or name[0].isdigit():
@@ -212,7 +207,7 @@ def name_fields(
                     f"name from {raw!r}; using {name!r}.",
                 )
             )
-        named.append(Field(f.start, f.end, name))
+        derived.append(Field(f.start, f.end, name))
 
     orphans = [tok[2] for i, tok in enumerate(tokens) if i not in used]
     if orphans:
@@ -224,7 +219,7 @@ def name_fields(
             )
         )
 
-    return _disambiguate(tuple(named), diagnostics)
+    return _disambiguate(tuple(derived), diagnostics)
 
 
 def _disambiguate(
