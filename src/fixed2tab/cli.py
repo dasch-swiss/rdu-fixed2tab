@@ -17,6 +17,7 @@ from fixed2tab import __version__
 from fixed2tab.carve import HeaderMode, write_outputs
 from fixed2tab.detect import (
     PAD_NEEDS_HEADER_LINE,
+    LengthProfile,
     LineSource,
     ShortLinePolicy,
     blank_runs,
@@ -349,20 +350,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _encoding_diagnostic(source: LineSource, char_widths: int) -> Diagnostic | None:
+def _encoding_diagnostic(profile: LengthProfile, encoding: str) -> Diagnostic | None:
     """Warn when byte lengths are uniform but character lengths are not.
 
     That combination means the generating program padded by bytes while the
     chosen encoding is multi-byte, so character offsets no longer line up with
-    the columns. The output would be quietly wrong rather than visibly broken,
-    which is the failure mode worth spending a pass to catch.
+    the columns. The output would be quietly wrong rather than visibly broken.
+    Pass 1 measures both lengths, so the check costs no extra read.
     """
-    byte_hist = source.byte_lengths()
-    if len(byte_hist) == 1 and char_widths > 1:
+    if profile.byte_uniform and len(profile.histogram) > 1:
         return Diagnostic(
             "byte-vs-char",
             "every line has the same length in bytes but not in characters "
-            f"under --encoding {source.encoding}. The file is probably "
+            f"under --encoding {encoding}. The file is probably "
             "byte-padded legacy output; try --encoding latin-1.",
         )
     return None
@@ -386,7 +386,7 @@ def run(args: argparse.Namespace) -> int:
 
     profile, diagnostics = profile_lengths(source)
     width = args.record_width or profile.record_width
-    if enc_note := _encoding_diagnostic(source, len(profile.histogram)):
+    if enc_note := _encoding_diagnostic(profile, args.encoding):
         diagnostics.append(enc_note)
 
     classified, class_notes = classify_input(source, width, args.short_lines, args.header_line)

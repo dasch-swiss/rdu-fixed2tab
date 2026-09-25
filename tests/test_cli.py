@@ -500,3 +500,51 @@ def test_header_line_zero_means_no_preamble(tmp_path):
 def test_negative_header_line_is_a_usage_error(tmp_path, clean):
     status, *_ = convert(tmp_path, clean, "--header-line", "-1")
     assert status == ExitCode.USAGE
+
+
+BYTE_PADDED_ROWS = [
+    ("Zurich", 1),
+    ("Zürich", 22),
+    ("Genève", 333),
+    ("Neuchâtel", 4),
+    ("Bern", 55),
+] * 2
+
+
+def byte_padded(encoding):
+    """Records padded to a fixed width in *bytes* under ``encoding``."""
+    lines = []
+    for name, value in BYTE_PADDED_ROWS:
+        head = f"{name}".encode(encoding)
+        lines.append(head + b" " * (14 - len(head)) + f"{value:6d}".encode("ascii"))
+    return b"\n".join(lines) + b"\n"
+
+
+@pytest.mark.req("REQ-1.8")
+@pytest.mark.req("REQ-1.12")
+def test_latin1_input_needs_and_accepts_its_encoding(tmp_path):
+    f = tmp_path / "legacy.txt"
+    f.write_bytes(byte_padded("latin-1"))
+    status, *_ = convert(tmp_path, f, prefix="utf8")
+    assert status == ExitCode.INPUT  # 0xFC is not valid UTF-8
+    status, table, _r, rejected = convert(
+        tmp_path, f, "--encoding", "latin-1", "--header-line", "0", prefix="latin1"
+    )
+    assert status == ExitCode.SUCCESS
+    rows = [row.split("\t") for row in table.read_text(encoding="utf-8").rstrip("\n").split("\n")]
+    assert [r[0] for r in rows] == [name for name, _ in BYTE_PADDED_ROWS]
+    assert rejected.read_text() == ""
+
+
+@pytest.mark.req("REQ-1.10")
+def test_byte_padded_utf8_is_diagnosed(tmp_path):
+    """Uniform in bytes, ragged in characters: the byte-vs-char signature."""
+    f = tmp_path / "bytepadded.txt"
+    f.write_bytes(byte_padded("utf-8"))
+    _s, _t, report, _j = convert(tmp_path, f)
+    assert "byte-vs-char" in report.read_text()
+
+
+def test_uniform_utf8_is_not_diagnosed(tmp_path, clean):
+    _s, _t, report, _j = convert(tmp_path, clean)
+    assert "byte-vs-char" not in report.read_text()

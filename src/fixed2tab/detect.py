@@ -1,13 +1,13 @@
-"""Reading the input and pass 1: the line model and the record width.
+"""Reading the input, and the first two of the parser's three passes.
 
 The parser makes three streaming passes and never holds the file in memory:
 
-1. length histogram, and locating the first record-width line
+1. length histograms, in characters and in bytes, and the record width
 2. classification, preamble collection, and the blank map
-3. carving
+3. carving — in ``carve``
 
-Only pass 1 lives here so far. Its state is proportional to the number of
-*distinct* line lengths, not to the number of lines.
+Pass 1's state is proportional to the number of *distinct* line lengths, not
+to the number of lines.
 """
 
 from __future__ import annotations
@@ -108,6 +108,7 @@ class LengthProfile:
     max_length: int
     record_width: int
     tied_lengths: tuple[int, ...] = ()
+    byte_uniform: bool = False  # every line has the same length in bytes
 
     def lines_at(self, width: int) -> int:
         """How many lines have exactly ``width`` characters."""
@@ -158,6 +159,15 @@ class LineSource:
         self.encoding = encoding
 
     def __iter__(self) -> Iterator[tuple[int, str]]:
+        for number, text, _n_bytes in self._lines():
+            yield number, text
+
+    def _lines(self) -> Iterator[tuple[int, str, int]]:
+        """Each line with its number, its text, and its length in bytes.
+
+        The byte length is for the encoding diagnostic (REQ-1.10). Measuring it
+        here, in pass 1, is what spares that diagnostic a pass of its own.
+        """
         try:
             handle = self.path.open("rb")
         except OSError as exc:
@@ -183,19 +193,7 @@ class LineSource:
                     # make line 1 one character longer, shifting the histogram
                     # and with it the preamble boundary and the header.
                     text = text[len(BOM) :]
-                yield number, text
-
-    def byte_lengths(self) -> Counter[int]:
-        """Line lengths in *bytes*, for the encoding diagnostic (REQ-1.10)."""
-        lengths: Counter[int] = Counter()
-        with self.path.open("rb") as handle:
-            for raw in handle:
-                if raw.endswith(b"\n"):
-                    raw = raw[:-1]
-                if raw.endswith(b"\r"):
-                    raw = raw[:-1]
-                lengths[len(raw)] += 1
-        return lengths
+                yield number, text, len(raw)
 
 
 def detect_record_width(histogram: Counter[int]) -> tuple[int, tuple[int, ...]]:
@@ -217,9 +215,11 @@ def detect_record_width(histogram: Counter[int]) -> tuple[int, tuple[int, ...]]:
 def profile_lengths(source: LineSource) -> tuple[LengthProfile, list[Diagnostic]]:
     """Pass 1. Build the length histogram and derive the record width."""
     histogram: Counter[int] = Counter()
+    byte_lengths: set[int] = set()
     total = 0
-    for _number, text in source:
+    for _number, text, n_bytes in source._lines():
         histogram[len(text)] += 1
+        byte_lengths.add(n_bytes)
         total += 1
 
     if total == 0:
@@ -236,6 +236,7 @@ def profile_lengths(source: LineSource) -> tuple[LengthProfile, list[Diagnostic]
         max_length=max(histogram),
         record_width=width,
         tied_lengths=tied,
+        byte_uniform=len(byte_lengths) == 1,
     )
 
     diagnostics: list[Diagnostic] = []
