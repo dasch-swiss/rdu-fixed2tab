@@ -386,3 +386,93 @@ def test_supplied_names_suppress_stale_naming_warnings(tmp_path):
     text = named_report.read_text()
     assert "duplicate-names" not in text
     assert "header-token-discarded" not in text  # those tokens named the fields
+
+
+# The right-trimmed workflow, end to end. Rows of varied length, none as long as
+# the longest, so detection picks the mode and the report advises padding.
+TRIMMED_HEADING = "  ID   NAME    VAL"
+TRIMMED_ROWS = [
+    "  1  a      1",
+    "  2  bb     22",
+    "  3  ccc    333",
+    "  4  d      4",
+    "  5  eeeee  55555",
+    "  6  ff     6",
+    "  7  g      77",
+    "  8  hhhhhh 8888888",
+]
+
+
+@pytest.fixture
+def trimmed(tmp_path):
+    f = tmp_path / "trim.txt"
+    f.write_text("\n".join([TRIMMED_HEADING, *TRIMMED_ROWS]) + "\n", encoding="ascii")
+    return f
+
+
+@pytest.mark.req("REQ-0.7b")
+def test_right_trimmed_advice_names_header_line(tmp_path, trimmed):
+    """The printed remediation must be one that works when followed verbatim."""
+    status, _t, report, _j = convert(tmp_path, trimmed)
+    assert status == ExitCode.SUCCESS
+    advice = next(ln for ln in report.read_text().split("\n") if "[right-trimmed]" in ln)
+    assert "--short-lines pad --header-line N" in advice
+
+
+@pytest.mark.req("REQ-0.7b")
+def test_padding_without_header_line_is_a_usage_error(tmp_path, trimmed, capsys):
+    """Without a stated boundary, padding silently promoted a record to the header."""
+    status, table, report, rejected = convert(
+        tmp_path, trimmed, "--record-width", "19", "--short-lines", "pad"
+    )
+    assert status == ExitCode.USAGE
+    assert "--header-line" in capsys.readouterr().err
+    assert not any(p.exists() for p in (table, report, rejected))
+
+
+@pytest.mark.req("REQ-0.7b")
+def test_right_trimmed_workflow_recovers_every_row(tmp_path, trimmed):
+    status, table, report, rejected = convert(
+        tmp_path, trimmed, "--record-width", "19", "--short-lines", "pad", "--header-line", "1"
+    )
+    assert status == ExitCode.SUCCESS
+    assert len(table.read_text().rstrip("\n").split("\n")) == len(TRIMMED_ROWS)
+    assert rejected.read_text() == f"1\tlength\t{TRIMMED_HEADING}\n"
+    text = report.read_text()
+    assert f"header           {TRIMMED_HEADING!r}" in text
+    assert "padding-and-preamble" in text
+
+
+@pytest.mark.req("REQ-0.7b")
+def test_header_line_via_the_cli(tmp_path, clean):
+    """--header-line picks which preamble line names the columns."""
+    _s, default_table, _r, _j = convert(tmp_path, clean, prefix="auto")
+    status, table, report, _j2 = convert(tmp_path, clean, "--header-line", "1", prefix="forced")
+    assert status == ExitCode.SUCCESS
+    text = report.read_text()
+    assert "header-line      1" in text
+    title = clean.read_text(encoding="utf-8").split("\n")[0]
+    assert f"header           {title!r}" in text
+    # The real heading is not record-width, so it is still rejected, not carved.
+    assert table.read_text() == default_table.read_text()
+
+
+@pytest.mark.req("REQ-0.7b")
+def test_header_line_zero_means_no_preamble(tmp_path):
+    rows = [f"{i:4d}  {i * 2:6d}  {i * 3:6d}" for i in range(1, 9)]
+    # A short first record, which the length rule would have taken as preamble.
+    rows[0] = rows[0].rstrip()
+    f = tmp_path / "bare.txt"
+    f.write_text("\n".join(r.rstrip() for r in rows) + "\n", encoding="ascii")
+    status, table, report, rejected = convert(
+        tmp_path, f, "--short-lines", "pad", "--header-line", "0"
+    )
+    assert status == ExitCode.SUCCESS
+    assert rejected.read_text() == ""
+    assert len(table.read_text().rstrip("\n").split("\n")) == 8
+    assert "preamble         none" in report.read_text()
+
+
+def test_negative_header_line_is_a_usage_error(tmp_path, clean):
+    status, *_ = convert(tmp_path, clean, "--header-line", "-1")
+    assert status == ExitCode.USAGE

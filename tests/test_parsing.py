@@ -292,7 +292,7 @@ def test_header_line_moves_the_preamble_boundary(tmp_path):
     f = tmp_path / "r.txt"
     f.write_text("TITLE\n" + heading + "\n" + "\n".join(rows) + "\n", encoding="ascii")
     src = LineSource(f)
-    without, _ = classify_input(src, width, ShortLinePolicy.PAD)
+    without, _ = classify_input(src, width, ShortLinePolicy.PAD, header_line=1)
     withflag, _ = classify_input(src, width, ShortLinePolicy.PAD, header_line=2)
     assert without.counts.table_rows == withflag.counts.table_rows + 1
     assert withflag.preamble.header is not None

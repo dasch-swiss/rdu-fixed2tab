@@ -16,6 +16,7 @@ from pathlib import Path
 from fixed2tab import __version__
 from fixed2tab.carve import HeaderMode, write_outputs
 from fixed2tab.detect import (
+    PAD_NEEDS_HEADER_LINE,
     LineSource,
     ShortLinePolicy,
     blank_runs,
@@ -264,7 +265,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--header-line",
         type=int,
         metavar="N",
-        help="1-based line to use as the column headings; also extends the preamble through that line",
+        help="use line N as the column headings. Lines 1 to N are preamble and are not "
+        "carved as data; 0 means there is no preamble. Required with --short-lines pad",
     )
 
     read = parser.add_argument_group("reading")
@@ -335,8 +337,10 @@ def run(args: argparse.Namespace) -> int:
         raise UsageError(f"--min-gutter must be at least 1, got {args.min_gutter}")
     if args.record_width is not None and args.record_width < 1:
         raise UsageError(f"--record-width must be at least 1, got {args.record_width}")
-    if args.header_line is not None and args.header_line < 1:
-        raise UsageError(f"--header-line is 1-based, got {args.header_line}")
+    if args.header_line is not None and args.header_line < 0:
+        raise UsageError(f"--header-line is 1-based, or 0 for no preamble; got {args.header_line}")
+    if args.short_lines == ShortLinePolicy.PAD and args.header_line is None:
+        raise UsageError(PAD_NEEDS_HEADER_LINE)
     try:
         codecs.lookup(args.encoding)
     except LookupError as exc:
@@ -365,7 +369,8 @@ def run(args: argparse.Namespace) -> int:
             + "\n  rejected by reason: "
             + ", ".join(f"{k}={v}" for k, v in classified.by_reason.items() if v)
             + "\n  If the width is wrong, set --record-width; if records are "
-            "shorter than it, add --short-lines pad."
+            "shorter than it, add --short-lines pad together with "
+            "--header-line N."
         )
 
     if classified.counts.table_rows < 6 and not args.columns:
@@ -492,7 +497,7 @@ def run(args: argparse.Namespace) -> int:
         "columns": args.columns or "(detected)",
         "encoding": args.encoding,
         "header": args.header,
-        "header-line": args.header_line if args.header_line else "(auto)",
+        "header-line": args.header_line if args.header_line is not None else "(auto)",
         "min-gutter": args.min_gutter,
         "record-width": args.record_width if args.record_width else "(detected)",
         "short-lines": args.short_lines,

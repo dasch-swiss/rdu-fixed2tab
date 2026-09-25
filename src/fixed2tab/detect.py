@@ -31,6 +31,7 @@ from fixed2tab.model import (
 )
 
 __all__ = [
+    "PAD_NEEDS_HEADER_LINE",
     "ClassifiedInput",
     "LengthProfile",
     "LineSource",
@@ -51,6 +52,14 @@ BOM = "﻿"
 # Classes of control character that mark a line as non-record (REQ-2.8). TAB is
 # excluded here because it gets its own fatal treatment: a TAB inside a record
 # would silently corrupt the TSV, which is the failure this tool exists to stop.
+PAD_NEEDS_HEADER_LINE = (
+    "--short-lines pad needs --header-line. Under padding the records are "
+    "shorter than the record width, so the preamble cannot be found by line "
+    "length: leading records would be absorbed into it and one of them used as "
+    "the column headings. Pass --header-line N, where N is the line holding the "
+    "column headings, or --header-line 0 if the file has none."
+)
+
 CONTROL_RANGES = ((0x00, 0x08), (0x0B, 0x1F), (0x7F, 0x9F))
 
 
@@ -74,6 +83,14 @@ class ShortLinePolicy:
     genuinely is right-trimmed, pass 1 recognises the signature and the report
     says so, naming ``--short-lines pad`` — an explicit opt-in, on a file the
     user has been told about.
+
+    **Padding also requires ``--header-line``.** The length-based preamble
+    boundary cannot work under padding: records are shorter than the width by
+    definition, so every record before the first full-width one was absorbed
+    into the preamble, and the last of them became the header. Following the
+    report's own advice on an eight-record file produced four rows, exit 0 and
+    a reconciliation that balanced. Requiring the boundary to be stated makes
+    that loss impossible rather than merely warned about.
     """
 
     PAD = "pad"
@@ -242,7 +259,9 @@ def profile_lengths(source: LineSource) -> tuple[LengthProfile, list[Diagnostic]
                 "which is the signature of a file whose trailing blanks were "
                 f"stripped. Records shorter than the detected width will be "
                 "REJECTED, not padded. To parse this file, pass "
-                f"--record-width {profile.max_length} --short-lines pad.",
+                f"--record-width {profile.max_length} --short-lines pad "
+                "--header-line N, where N is the line holding the column "
+                "headings (0 if there are none).",
             )
         )
     return profile, diagnostics
@@ -359,8 +378,11 @@ def classify_input(
     """Pass 2. Split the input into records and rejects, and find the header.
 
     Streams once. The preamble is bounded by construction — it ends at the first
-    record-width line — so memory does not grow with the file.
+    record-width line, or at ``header_line`` — so memory does not grow with the
+    file.
     """
+    if short_policy == ShortLinePolicy.PAD and header_line is None:
+        raise UsageError(PAD_NEEDS_HEADER_LINE)
     preamble_acc: list[tuple[int, str]] = []
     in_preamble = True
     preamble = Preamble()
@@ -420,10 +442,10 @@ def classify_input(
             diagnostics.append(
                 Diagnostic(
                     "padding-and-preamble",
-                    "padding is active and this file has a preamble. The preamble "
-                    "boundary uses exact line lengths, so a short *first* record "
-                    "would be absorbed into it. Check the header shown above, and "
-                    "use --header-line or --record-width if it is wrong.",
+                    f"padding is active, so the preamble is lines 1-{len(preamble.lines)} "
+                    f"as set by --header-line {header_line}, and the column headings "
+                    f"are taken from {preamble.header!r}. If that is not the heading "
+                    "line, change --header-line.",
                 )
             )
     if not n_records:
