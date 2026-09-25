@@ -6,7 +6,7 @@ import pytest
 from conftest import EXPECTED_NAMES, REFERENCE_TSV, REFERENCE_TXT, needs_reference
 
 from fixed2tab.cli import build_parser, main, parse_columns
-from fixed2tab.model import ExitCode, UsageError
+from fixed2tab.model import ExitCode, RejectReason, UsageError
 
 
 def convert(tmp_path, source, *extra, prefix="out"):
@@ -198,6 +198,20 @@ def test_help_documents_every_option_and_the_hazards():
     assert "reduce that number" in lowered  # the positional-offset migration note
     assert "1-based" in lowered
     assert "exit status" in lowered
+    for reason in RejectReason.names():
+        assert reason in text  # the rejected file's reason column is documented
+
+
+def test_help_examples_survive_rendering():
+    """argparse collapses runs of spaces in option help before printing it.
+
+    A literal '4h  6m 22s' was therefore shown with one space, so the example
+    that demonstrates --collapse-spaces could not demonstrate it. Wrapping is
+    normalised here; the spaces inside the examples are what is asserted.
+    """
+    flat = " ".join(build_parser().format_help().split())
+    assert "'4h··6m 22s' becomes '4h·6m 22s' (· marks one space)" in flat
+    assert "inside cells like '4h··6m 22s'" in flat
 
 
 @needs_reference

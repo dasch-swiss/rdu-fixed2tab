@@ -59,6 +59,13 @@ examples
               --report geometry.txt --rejected skipped.txt \\
               --columns '1-12:DATE,18-27:BEST_TIME,31-37:DELTAT_s'
 
+  The same columns can be given as widths instead, which is how a FORTRAN
+  FORMAT states them: take 12 positions, skip 5, take 10. These two are
+  equivalent:
+
+    --widths  '12:DATE,5x,10:BEST_TIME'
+    --columns '1-12:DATE,18-27:BEST_TIME'
+
 when a column comes out named colN
 ----------------------------------
   Some files put one heading above several columns — "Jewish Date Scheme" over a
@@ -85,6 +92,18 @@ outputs
   always holds and nothing can disappear unnoticed. The rejected file is often
   empty; that is a result, not a failure.
 
+  The table has no header row unless you pass --header plain; the column names
+  are always in the report. Later steps often address rows by position, and an
+  extra first row would shift every offset by one without anything visibly
+  breaking.
+
+  The rejected file is itself a TSV, one line per rejected input line:
+
+      line number <TAB> reason <TAB> the line, verbatim
+
+  The reason is one of length, control-char, preamble-identity or rule-line —
+  the names --allow-rejects accepts.
+
 positions
 ---------
   Every character position is 1-based and inclusive, in --columns, in the report
@@ -99,9 +118,10 @@ migrating a workflow that used a hand-made conversion
 
 a Galaxy upload hazard
 ----------------------
-  Do not let Galaxy's uploader apply "convert spaces to tabs" to a fixed-width
-  file. It destroys the column positions before this tool ever sees the data. A
-  TAB inside a record is treated as fatal here for that reason.
+  If you use this tool on Galaxy, do not let the uploader apply
+  "convert spaces to tabs" to a fixed-width file. It destroys the column
+  positions before this tool ever sees the data. A TAB inside a record is
+  treated as fatal here for that reason.
 
 exit status
 -----------
@@ -234,7 +254,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--rejected",
         required=True,
         type=Path,
-        help="every unparsed line, verbatim, with its input line number",
+        help="every unparsed line, as a TSV of input line number, rejection reason and "
+        "the line verbatim",
     )
 
     geo = parser.add_argument_group("geometry")
@@ -246,14 +267,20 @@ def build_parser() -> argparse.ArgumentParser:
     geo.add_argument(
         "--widths",
         metavar="SPEC",
-        help="explicit column widths instead of ranges, e.g. '2x,5,2x,8' — a FORTRAN FORMAT such as 2X,I5,2X,F8.3 transcribes directly. Nx skips N positions; N:NAME names a column. Mutually exclusive with --columns",
+        help="explicit column widths instead of ranges, e.g. '2x,5,2x,8'. Read left to "
+        "right from position 1: a bare N takes the next N positions as a column, N:NAME "
+        "does the same and names it, and Nx skips N positions. A FORTRAN FORMAT such as "
+        "2X,I5,2X,F8.3 transcribes directly. Mutually exclusive with --columns",
     )
     geo.add_argument(
         "--min-gutter",
         type=int,
         default=2,
         metavar="N",
-        help="blank positions needed to separate two columns (default: 2). Lower splits inside cells like '4h  6m 22s'; higher merges narrow columns",
+        # Spaces are drawn as "·" because argparse collapses runs of spaces in
+        # option help: a literal '4h  6m 22s' is printed with one space.
+        help="blank positions needed to separate two columns (default: 2). Lower splits "
+        "inside cells like '4h··6m 22s' (· marks one space); higher merges narrow columns",
     )
     geo.add_argument(
         "--record-width",
@@ -287,13 +314,18 @@ def build_parser() -> argparse.ArgumentParser:
     out.add_argument(
         "--collapse-spaces",
         action="store_true",
-        help="reduce runs of spaces inside each cell to one. Off by default. Applies to EVERY cell, so meaningful internal spacing is flattened too: '4h  6m 22s' becomes '4h 6m 22s'. Useful when a range merges several layout columns into one value, such as a date written as year, month and day",
+        help="reduce runs of spaces inside each cell to one. Off by default. Applies to "
+        "EVERY cell, so meaningful internal spacing is flattened too: '4h··6m 22s' "
+        "becomes '4h·6m 22s' (· marks one space). Useful when a range merges several "
+        "layout columns into one value, such as a date written as year, month and day",
     )
     out.add_argument(
         "--header",
         choices=HeaderMode.CHOICES,
         default=HeaderMode.DEFAULT,
-        help="write column names as the table's first row, or not (default: none). Names always appear in the report",
+        help="write column names as the table's first row (plain), or not (default: "
+        "none). Off by default because later steps often address rows by position. "
+        "Names always appear in the report",
     )
 
     strict = parser.add_argument_group("strictness")

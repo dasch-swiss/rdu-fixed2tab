@@ -21,8 +21,17 @@ $ fixed2tab --input observations.txt \
 
 Every successful run writes three files. The table is the data; the report shows the
 detected geometry and how to correct it; the rejected file contains every line
-that was not parsed, verbatim and numbered. Input line count always equals table
-rows plus rejected lines, so nothing can disappear unnoticed.
+that was not parsed. Input line count always equals table rows plus rejected
+lines, so nothing can disappear unnoticed.
+
+The table has **no header row** by default: later steps often address rows by
+position, and an extra first row would shift every offset by one without
+anything visibly breaking. The column names are always in the report; pass
+`--header plain` to write them as the first row as well.
+
+The rejected file is itself a TSV with three columns: the input line number, the
+rejection reason (`length`, `control-char`, `preamble-identity` or `rule-line`),
+and the line verbatim.
 
 ## Documentation
 
@@ -42,6 +51,7 @@ Requires Python 3.10 or newer and has no other dependencies.
 Not yet published to conda-forge or PyPI, so install it from a local build:
 
 ```console
+$ conda install -n base conda-build   # once; not part of a base conda install
 $ cd rdu-fixed2tab
 $ conda build conda-recipe
 $ conda create -n fixed2tab-local -c local fixed2tab
