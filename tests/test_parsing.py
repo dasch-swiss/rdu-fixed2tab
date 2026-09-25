@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 
 import pytest
-from conftest import EXPECTED_NAMES, EXPECTED_RANGES, REFERENCE_TXT, covers, needs_reference
+from helpers import EXPECTED_NAMES, EXPECTED_RANGES, REFERENCE_TXT, covers, needs_reference
 
 from fixed2tab.carve import carve_cells
 from fixed2tab.detect import (

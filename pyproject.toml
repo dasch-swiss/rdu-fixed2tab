@@ -55,7 +55,6 @@ include = ["src/", "tests/", "test-data/", "LICENSE", "README.md", "pyproject.to
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["tests"]
 markers = [
     "req(id): the PRD requirement this test exercises, e.g. @pytest.mark.req('REQ-1.2')",
 ]

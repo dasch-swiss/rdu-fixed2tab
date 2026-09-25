@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import EXPECTED_NAMES, REFERENCE_TSV, REFERENCE_TXT, needs_reference
+from helpers import EXPECTED_NAMES, REFERENCE_TSV, REFERENCE_TXT, needs_reference
 
 from fixed2tab.cli import build_parser, main, parse_columns
 from fixed2tab.model import ExitCode, RejectReason, UsageError
