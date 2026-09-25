@@ -12,13 +12,16 @@ to the number of lines.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from fixed2tab.header import Preamble, build_preamble
 from fixed2tab.model import (
+    DEFAULT_MIN_GUTTER,
     BlankRun,
     Counts,
     Diagnostic,
@@ -47,7 +50,7 @@ __all__ = [
     "profile_lengths",
 ]
 
-BOM = "﻿"
+BOM = "\ufeff"  # written as an escape: the literal is invisible
 
 # Classes of control character that mark a line as non-record (REQ-2.8). TAB is
 # excluded here because it gets its own fatal treatment: a TAB inside a record
@@ -60,10 +63,10 @@ PAD_NEEDS_HEADER_LINE = (
     "column headings, or --header-line 0 if the file has none."
 )
 
-CONTROL_RANGES = ((0x00, 0x08), (0x0B, 0x1F), (0x7F, 0x9F))
+CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
-class ShortLinePolicy:
+class ShortLinePolicy(str, Enum):
     """What to do with lines shorter than the record width.
 
     Many real fixed-width files have trailing blanks stripped, so records come
@@ -93,10 +96,14 @@ class ShortLinePolicy:
     that loss impossible rather than merely warned about.
     """
 
+    REJECT = "reject"  # the default
     PAD = "pad"
-    REJECT = "reject"
-    CHOICES = (REJECT, PAD)
-    DEFAULT = REJECT
+
+    def __str__(self) -> str:
+        # The value, not "ShortLinePolicy.PAD", in the report and in --help —
+        # and identically on every supported Python, where Enum formatting of
+        # str mixins changed in 3.12.
+        return self.value
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,14 +287,14 @@ def has_control_char(text: str) -> bool:
     TAB is excluded deliberately — inside a record it is fatal rather than a
     reason to skip the line, because emitting it would corrupt the TSV.
     """
-    return any(any(lo <= ord(ch) <= hi for lo, hi in CONTROL_RANGES) for ch in text)
+    return CONTROL_RE.search(text) is not None
 
 
 def classify_line(
     text: str,
     record_width: int,
     preamble_rstripped: frozenset[str],
-    short_policy: str = ShortLinePolicy.DEFAULT,
+    short_policy: ShortLinePolicy = ShortLinePolicy.REJECT,
     past_preamble: bool = True,
 ) -> tuple[str | None, RejectReason | None]:
     """Classify one line, returning either its record text or a rejection reason.
@@ -378,7 +385,7 @@ def preamble_reason(text: str, record_width: int) -> RejectReason:
 def classify_input(
     source: LineSource,
     record_width: int,
-    short_policy: str = ShortLinePolicy.DEFAULT,
+    short_policy: ShortLinePolicy = ShortLinePolicy.REJECT,
     header_line: int | None = None,
 ) -> tuple[ClassifiedInput, list[Diagnostic]]:
     """Pass 2. Split the input into records and rejects, and find the header.
@@ -497,7 +504,7 @@ def blank_runs(blank: tuple[bool, ...]) -> tuple[BlankRun, ...]:
 
 
 def derive_fields(
-    blank: tuple[bool, ...], min_gutter: int = 2
+    blank: tuple[bool, ...], min_gutter: int = DEFAULT_MIN_GUTTER
 ) -> tuple[tuple[Field, ...], tuple[BlankRun, ...]]:
     """Split the record into fields at blank runs of at least ``min_gutter``.
 

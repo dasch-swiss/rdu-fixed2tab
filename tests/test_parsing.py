@@ -14,13 +14,14 @@ from fixed2tab.detect import (
     classify_input,
     derive_fields,
     detect_record_width,
+    has_control_char,
     profile_lengths,
 )
 from fixed2tab.header import name_fields, sanitise, tokenize
 from fixed2tab.model import Field, InputError, RejectReason
 
 
-def geometry_of(path, min_gutter=2, policy=ShortLinePolicy.DEFAULT, header_line=None):
+def geometry_of(path, min_gutter=2, policy=ShortLinePolicy.REJECT, header_line=None):
     src = LineSource(path)
     profile, _ = profile_lengths(src)
     classified, _ = classify_input(src, profile.record_width, policy, header_line)
@@ -310,3 +311,24 @@ def test_reference_file_geometry():
     assert classified.counts.rejected_lines == 2
     assert [(f.start, f.end) for f in named] == EXPECTED_RANGES
     assert [f.name for f in named] == EXPECTED_NAMES
+
+
+@pytest.mark.req("REQ-2.8")
+@pytest.mark.parametrize(
+    ("char", "expected"),
+    [
+        ("\x00", True),
+        ("\x08", True),
+        ("\x0c", True),
+        ("\x1f", True),
+        ("\x7f", True),
+        ("\x9f", True),
+        ("\t", False),
+        ("\n", False),
+        ("\xa0", False),
+        ("a", False),
+    ],
+)
+def test_control_character_ranges(char, expected):
+    """TAB and LF are excluded; the C0, DEL and C1 ranges are not."""
+    assert has_control_char(f"ab{char}cd") is expected

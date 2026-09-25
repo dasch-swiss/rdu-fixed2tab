@@ -27,6 +27,7 @@ from fixed2tab.detect import (
 )
 from fixed2tab.header import name_fields
 from fixed2tab.model import (
+    DEFAULT_MIN_GUTTER,
     Diagnostic,
     ExitCode,
     Field,
@@ -260,12 +261,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     geo = parser.add_argument_group("geometry")
-    geo.add_argument(
+    # One or the other; argparse enforces it at parse time and says so in the
+    # usage line, before anything is read.
+    explicit = geo.add_mutually_exclusive_group()
+    explicit.add_argument(
         "--columns",
         metavar="SPEC",
         help="explicit columns, e.g. '1-12:DATE,18-27:BEST_TIME'; overrides detection. Positions are 1-based inclusive",
     )
-    geo.add_argument(
+    explicit.add_argument(
         "--widths",
         metavar="SPEC",
         help="explicit column widths instead of ranges, e.g. '2x,5,2x,8'. Read left to "
@@ -276,11 +280,11 @@ def build_parser() -> argparse.ArgumentParser:
     geo.add_argument(
         "--min-gutter",
         type=int,
-        default=2,
         metavar="N",
         # Spaces are drawn as "·" because argparse collapses runs of spaces in
         # option help: a literal '4h  6m 22s' is printed with one space.
-        help="blank positions needed to separate two columns (default: 2). Lower splits "
+        help="blank positions needed to separate two columns (default: "
+        f"{DEFAULT_MIN_GUTTER}). Lower splits "
         "inside cells like '4h··6m 22s' (· marks one space); higher merges narrow columns",
     )
     geo.add_argument(
@@ -306,8 +310,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     read.add_argument(
         "--short-lines",
-        choices=ShortLinePolicy.CHOICES,
-        default=ShortLinePolicy.DEFAULT,
+        choices=[p.value for p in ShortLinePolicy],
+        default=ShortLinePolicy.REJECT.value,
         help="lines shorter than the record width: reject them (default) or pad with spaces. Padding can promote page numbers and footers to data rows, so it is opt-in",
     )
 
@@ -322,8 +326,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     out.add_argument(
         "--header",
-        choices=HeaderMode.CHOICES,
-        default=HeaderMode.DEFAULT,
+        choices=[m.value for m in HeaderMode],
+        default=HeaderMode.NONE.value,
         help="write column names as the table's first row (plain), or not (default: "
         "none). Off by default because later steps often address rows by position. "
         "Names always appear in the report",
@@ -369,13 +373,16 @@ def _encoding_diagnostic(profile: LengthProfile, encoding: str) -> Diagnostic | 
 
 
 def run(args: argparse.Namespace) -> int:
-    if args.min_gutter < 1:
-        raise UsageError(f"--min-gutter must be at least 1, got {args.min_gutter}")
+    min_gutter = DEFAULT_MIN_GUTTER if args.min_gutter is None else args.min_gutter
+    if min_gutter < 1:
+        raise UsageError(f"--min-gutter must be at least 1, got {min_gutter}")
     if args.record_width is not None and args.record_width < 1:
         raise UsageError(f"--record-width must be at least 1, got {args.record_width}")
     if args.header_line is not None and args.header_line < 0:
         raise UsageError(f"--header-line is 1-based, or 0 for no preamble; got {args.header_line}")
-    if args.short_lines == ShortLinePolicy.PAD and args.header_line is None:
+    short_lines = ShortLinePolicy(args.short_lines)
+    header_mode = HeaderMode(args.header)
+    if short_lines == ShortLinePolicy.PAD and args.header_line is None:
         raise UsageError(PAD_NEEDS_HEADER_LINE)
     try:
         codecs.lookup(args.encoding)
@@ -389,7 +396,7 @@ def run(args: argparse.Namespace) -> int:
     if enc_note := _encoding_diagnostic(profile, args.encoding):
         diagnostics.append(enc_note)
 
-    classified, class_notes = classify_input(source, width, args.short_lines, args.header_line)
+    classified, class_notes = classify_input(source, width, short_lines, args.header_line)
     diagnostics += class_notes
 
     if classified.counts.table_rows == 0:
@@ -427,8 +434,6 @@ def run(args: argparse.Namespace) -> int:
     # per-field blank rate and a run listing, and those are how a user judges
     # whether their supplied geometry is right.
     runs = blank_runs(classified.blank)
-    if args.columns is not None and args.widths is not None:
-        raise UsageError("--columns and --widths both describe the geometry; supply one")
     # Tested against None, not truthiness: an explicitly empty value is a
     # mistake to report, not a reason to quietly fall back to detection.
     if args.columns is not None or args.widths is not None:
@@ -466,7 +471,7 @@ def run(args: argparse.Namespace) -> int:
                     f"no --columns range and will be dropped: {', '.join(spans)}",
                 )
             )
-        if args.min_gutter != 2:
+        if args.min_gutter is not None:
             diagnostics.append(
                 Diagnostic(
                     "min-gutter-ignored",
@@ -475,13 +480,13 @@ def run(args: argparse.Namespace) -> int:
                 )
             )
     else:
-        fields, runs = derive_fields(classified.blank, args.min_gutter)
+        fields, runs = derive_fields(classified.blank, min_gutter)
         detected = True
         if len(fields) == 1:
             diagnostics.append(
                 Diagnostic(
                     "single-field",
-                    f"no run of {args.min_gutter} or more blank positions was "
+                    f"no run of {min_gutter} or more blank positions was "
                     "found, so the whole record is one column. Lower "
                     "--min-gutter if the columns are separated by a single "
                     "space, or supply --columns.",
@@ -515,7 +520,7 @@ def run(args: argparse.Namespace) -> int:
             )
         )
 
-    geometry = Geometry(width, named, runs, args.min_gutter)
+    geometry = Geometry(width, named, runs, min_gutter)
 
     counts, stats, by_reason = write_outputs(
         source,
@@ -523,20 +528,20 @@ def run(args: argparse.Namespace) -> int:
         classified.preamble,
         args.table,
         args.rejected,
-        args.short_lines,
+        short_lines,
         args.header_line,
-        args.header,
+        header_mode,
         args.collapse_spaces,
     )
     parameters = {
         "collapse-spaces": args.collapse_spaces,
         "columns": args.columns or "(detected)",
         "encoding": args.encoding,
-        "header": args.header,
+        "header": header_mode,
         "header-line": args.header_line if args.header_line is not None else "(auto)",
-        "min-gutter": args.min_gutter,
+        "min-gutter": min_gutter,
         "record-width": args.record_width if args.record_width else "(detected)",
-        "short-lines": args.short_lines,
+        "short-lines": short_lines,
         "strict": args.strict,
         "widths": args.widths or "(not used)",
     }

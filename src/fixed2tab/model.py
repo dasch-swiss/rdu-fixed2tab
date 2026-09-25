@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum
 
 __all__ = [
+    "DEFAULT_MIN_GUTTER",
     "BlankRun",
     "Counts",
     "Diagnostic",
@@ -29,6 +30,11 @@ __all__ = [
     "UsageError",
     "count_by_reason",
 ]
+
+
+# Blank positions needed to separate two columns. Named once, because the CLI
+# needs to know whether the user changed it and a repeated literal would drift.
+DEFAULT_MIN_GUTTER = 2
 
 
 class ExitCode(IntEnum):
@@ -171,7 +177,7 @@ class Geometry:
     record_width: int
     fields: tuple[Field, ...]
     blank_runs: tuple[BlankRun, ...] = ()
-    min_gutter: int = 2
+    min_gutter: int = DEFAULT_MIN_GUTTER
 
     def __post_init__(self) -> None:
         if self.record_width < 1:

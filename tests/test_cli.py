@@ -548,3 +548,23 @@ def test_byte_padded_utf8_is_diagnosed(tmp_path):
 def test_uniform_utf8_is_not_diagnosed(tmp_path, clean):
     _s, _t, report, _j = convert(tmp_path, clean)
     assert "byte-vs-char" not in report.read_text()
+
+
+@pytest.mark.req("REQ-4.11")
+def test_columns_and_widths_are_mutually_exclusive(tmp_path, clean):
+    """Refused at parse time, before the input is read."""
+    with pytest.raises(SystemExit) as exc:
+        convert(tmp_path, clean, "--columns", "1-12", "--widths", "12")
+    assert exc.value.code == ExitCode.USAGE
+
+
+@pytest.mark.parametrize("value", ["2", "3"])
+def test_explicit_min_gutter_with_columns_is_flagged(tmp_path, clean, value):
+    """Even the default value, when passed, is a choice that has no effect."""
+    _s, _t, report, _j = convert(tmp_path, clean, "--columns", "1-12", "--min-gutter", value)
+    assert "min-gutter-ignored" in report.read_text()
+
+
+def test_min_gutter_not_flagged_when_not_passed(tmp_path, clean):
+    _s, _t, report, _j = convert(tmp_path, clean, "--columns", "1-12")
+    assert "min-gutter-ignored" not in report.read_text()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from fixed2tab.detect import (
@@ -47,7 +48,7 @@ class FieldStats:
         return tuple(row[index] for row in self.samples if index < len(row))
 
 
-class HeaderMode:
+class HeaderMode(str, Enum):
     """Whether to write column names as the table's first row.
 
     ``none`` is the default. Names live in the geometry report, where they
@@ -56,10 +57,11 @@ class HeaderMode:
     every offset by one without anything visibly breaking.
     """
 
-    NONE = "none"
+    NONE = "none"  # the default
     PLAIN = "plain"
-    CHOICES = (NONE, PLAIN)
-    DEFAULT = NONE
+
+    def __str__(self) -> str:
+        return self.value
 
 
 def carve_cells(record: str, fields: tuple[Field, ...], collapse: bool = False) -> list[str]:
@@ -86,7 +88,7 @@ def iter_classified(
     source: LineSource,
     record_width: int,
     preamble: Preamble,
-    short_policy: str,
+    short_policy: ShortLinePolicy,
     header_line: int | None,
 ) -> Iterator[tuple[int, str, str | None, RejectReason | None]]:
     """Replay pass 2's classification, yielding each line's verdict.
@@ -114,9 +116,9 @@ def write_outputs(
     preamble: Preamble,
     table_path: Path,
     rejected_path: Path,
-    short_policy: str = ShortLinePolicy.DEFAULT,
+    short_policy: ShortLinePolicy = ShortLinePolicy.REJECT,
     header_line: int | None = None,
-    header_mode: str = HeaderMode.DEFAULT,
+    header_mode: HeaderMode = HeaderMode.NONE,
     collapse: bool = False,
 ) -> tuple[Counts, FieldStats, dict[str, int]]:
     """Write the table and the rejected lines; return the reconciliation counts.
