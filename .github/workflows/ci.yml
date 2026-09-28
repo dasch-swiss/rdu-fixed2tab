@@ -5,10 +5,14 @@ on:
     branches: [main]
   pull_request:
 
+# Read-only token: nothing here pushes, comments or publishes.
+permissions:
+  contents: read
+
 jobs:
   test:
-    name: pytest (py${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: pytest (py${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -16,6 +20,12 @@ jobs:
         # package claims; the newest is tested so the claim stays honest at both
         # ends of the supported range.
         python-version: ["3.10", "3.11", "3.12", "3.13"]
+        os: [ubuntu-latest]
+        include:
+          # The explicit-LF output guarantee can only be observed where the
+          # platform newline is CRLF.
+          - python-version: "3.13"
+            os: windows-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -23,6 +33,19 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev]"
       - run: pytest -q
+
+  lint:
+    name: ruff and mypy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests
+      - run: ruff format --check src tests
+      - run: mypy src/fixed2tab
 
   package:
     name: build and packaging checks
@@ -59,6 +82,18 @@ jobs:
           pip install dist/*.whl
           fixed2tab --version
           fixed2tab --help > /dev/null
+
+      - name: Conda recipe version matches the package
+        # Two hard-coded copies until the recipe reads the published sdist.
+        run: |
+          python - <<'PY'
+          import re, sys
+          init = open("src/fixed2tab/__init__.py", encoding="utf-8").read()
+          recipe = open("conda-recipe/meta.yaml", encoding="utf-8").read()
+          package = re.search(r'__version__ = "([^"]+)"', init)[1]
+          conda = re.search(r'set version = "([^"]+)"', recipe)[1]
+          sys.exit(f"version mismatch: package {package}, recipe {conda}" if package != conda else 0)
+          PY
 
       - name: Package declares no runtime dependencies
         # Load-bearing for `noarch: python` and for a fast conda-forge review.

@@ -5,22 +5,23 @@ from __future__ import annotations
 from collections import Counter
 
 import pytest
-from conftest import EXPECTED_NAMES, EXPECTED_RANGES, REFERENCE_TXT, covers, needs_reference
+from helpers import EXPECTED_NAMES, EXPECTED_RANGES, REFERENCE_TXT, covers, needs_reference
 
-from fixed2tab.carve import HeaderMode, carve_cells
+from fixed2tab.carve import carve_cells
 from fixed2tab.detect import (
     LineSource,
     ShortLinePolicy,
     classify_input,
     derive_fields,
     detect_record_width,
+    has_control_char,
     profile_lengths,
 )
 from fixed2tab.header import name_fields, sanitise, tokenize
 from fixed2tab.model import Field, InputError, RejectReason
 
 
-def geometry_of(path, min_gutter=2, policy=ShortLinePolicy.DEFAULT, header_line=None):
+def geometry_of(path, min_gutter=2, policy=ShortLinePolicy.REJECT, header_line=None):
     src = LineSource(path)
     profile, _ = profile_lengths(src)
     classified, _ = classify_input(src, profile.record_width, policy, header_line)
@@ -37,10 +38,10 @@ def geometry_of(path, min_gutter=2, policy=ShortLinePolicy.DEFAULT, header_line=
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        (b"aaa\nbbb", ["aaa", "bbb"]),          # unterminated final line counts
-        (b"aaa\nbbb\n", ["aaa", "bbb"]),        # trailing LF adds no line
-        (b"aaa\r\nbbb\r\n", ["aaa", "bbb"]),    # one trailing CR stripped
-        (b"aa\rbb\ncc\n", ["aa\rbb", "cc"]),    # a lone CR is not a terminator
+        (b"aaa\nbbb", ["aaa", "bbb"]),  # unterminated final line counts
+        (b"aaa\nbbb\n", ["aaa", "bbb"]),  # trailing LF adds no line
+        (b"aaa\r\nbbb\r\n", ["aaa", "bbb"]),  # one trailing CR stripped
+        (b"aa\rbb\ncc\n", ["aa\rbb", "cc"]),  # a lone CR is not a terminator
         ("﻿aaa\nbbb\n".encode(), ["aaa", "bbb"]),  # BOM removed before measuring
     ],
 )
@@ -159,7 +160,10 @@ def test_all_zero_record_survives(tmp_path):
     class of silent, biased loss that thresholded gutter detection caused.
     """
     f = tmp_path / "zeros.txt"
-    rows = ["  0     0       0.0      0" + " " * 10] * 4
+    # Exactly two distinct characters, so the distinct-character test alone
+    # *would* reject it; only the no-digits half of the rule saves it.
+    rows = ["  0     0       0" + " " * 10] * 4
+    assert len(set(rows[0].strip(" "))) == 2
     f.write_text("HEADING\n" + "\n".join(rows) + "\n", encoding="ascii")
     _p, classified, _n, _r, _x = geometry_of(f)
     assert classified.counts.table_rows == 4
@@ -168,10 +172,10 @@ def test_all_zero_record_survives(tmp_path):
 @pytest.mark.req("REQ-2.8")
 def test_control_character_line_is_rejected(tmp_path):
     good = "abc 123  def 45  xy"
-    ctl = "abc \f23  def 45  xy"          # same length, so length cannot claim it first
+    ctl = "abc \f23  def 45  xy"  # same length, so length cannot claim it first
     assert len(good) == len(ctl)
     f = tmp_path / "ctl.txt"
-    f.write_text("heading\n" + "\n".join([good, ctl, good, good]) + "\n", encoding="ascii")
+    f.write_text(f"heading\n{good}\n{ctl}\n{good}\n{good}\n", encoding="ascii")
     _p, classified, _n, _r, _x = geometry_of(f)
     assert classified.by_reason["control-char"] == 1
     assert classified.counts.table_rows == 3
@@ -185,8 +189,8 @@ def test_attribution_follows_the_declared_order(tmp_path):
     # "--" is short AND a rule line. Length is declared first, so it must win.
     f.write_text("hdr\n" + "\n".join([row] * 3) + "\n--\n", encoding="ascii")
     _p, classified, _n, _r, _x = geometry_of(f)
-    assert classified.by_reason["length"] == 2      # the heading and the short rule
-    assert classified.by_reason["rule-line"] == 0   # never reached for that line
+    assert classified.by_reason["length"] == 2  # the heading and the short rule
+    assert classified.by_reason["rule-line"] == 0  # never reached for that line
     assert classified.counts.table_rows == 3
 
 
@@ -226,7 +230,7 @@ def test_slicing_the_header_would_be_wrong(clean):
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ("DELTAT[s]", "DELTAT_s"),      # the worked example: not DELTATs, not DELTAT_s_
+        ("DELTAT[s]", "DELTAT_s"),  # the worked example: not DELTATs, not DELTAT_s_
         ("NEW MOON DATE", "NEW_MOON_DATE"),
         ("a--b", "a_b"),
         ("  padded  ", "padded"),
@@ -292,7 +296,7 @@ def test_header_line_moves_the_preamble_boundary(tmp_path):
     f = tmp_path / "r.txt"
     f.write_text("TITLE\n" + heading + "\n" + "\n".join(rows) + "\n", encoding="ascii")
     src = LineSource(f)
-    without, _ = classify_input(src, width, ShortLinePolicy.PAD)
+    without, _ = classify_input(src, width, ShortLinePolicy.PAD, header_line=1)
     withflag, _ = classify_input(src, width, ShortLinePolicy.PAD, header_line=2)
     assert without.counts.table_rows == withflag.counts.table_rows + 1
     assert withflag.preamble.header is not None
@@ -307,3 +311,24 @@ def test_reference_file_geometry():
     assert classified.counts.rejected_lines == 2
     assert [(f.start, f.end) for f in named] == EXPECTED_RANGES
     assert [f.name for f in named] == EXPECTED_NAMES
+
+
+@pytest.mark.req("REQ-2.8")
+@pytest.mark.parametrize(
+    ("char", "expected"),
+    [
+        ("\x00", True),
+        ("\x08", True),
+        ("\x0c", True),
+        ("\x1f", True),
+        ("\x7f", True),
+        ("\x9f", True),
+        ("\t", False),
+        ("\n", False),
+        ("\xa0", False),
+        ("a", False),
+    ],
+)
+def test_control_character_ranges(char, expected):
+    """TAB and LF are excluded; the C0, DEL and C1 ranges are not."""
+    assert has_control_char(f"ab{char}cd") is expected

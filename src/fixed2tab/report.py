@@ -48,19 +48,29 @@ def render_report(
         out.append(f"  {key:<16} {parameters[key]}")
 
     out += _section("Input")
-    out.append(f"  record width     {profile.record_width}")
+    # The effective width, which is what the columns below are carved from.
+    # Printing the detected one after a --record-width override made the report
+    # contradict its own column table.
+    width = geometry.record_width
+    stated = (
+        f"{width}"
+        if width == profile.record_width
+        else (f"{width} (detected {profile.record_width})")
+    )
+    out.append(f"  record width     {stated}")
     out.append(
-        f"  lines at width   {counts.input_lines and stats.rows} records, "
-        f"{profile.width_share:.1%} of {profile.total_lines} lines"
+        f"  lines at width   {profile.lines_at(width)} of {profile.total_lines} lines "
+        f"({profile.share_at(width):.1%})"
     )
     if profile.tied_lengths:
         out.append(
             f"  length tie       {', '.join(str(t) for t in profile.tied_lengths)} "
             "(chose the greatest)"
         )
-    out.append("  line lengths     " + ", ".join(
-        f"{length}×{count}" for length, count in profile.histogram[:8]
-    ))
+    out.append(
+        "  line lengths     "
+        + ", ".join(f"{length}×{count}" for length, count in profile.histogram[:8])
+    )
     if preamble.lines:
         out.append(f"  preamble         {len(preamble.lines)} line(s)")
         out.append(f"  header           {preamble.header!r}")
@@ -96,9 +106,7 @@ def render_report(
         f"  runs of at least {geometry.min_gutter} blank positions separate columns; "
         "narrower runs sit inside one"
     )
-    out.append(
-        "  " + " ".join(f"{r.start}-{r.end}({r.width})" for r in geometry.blank_runs)
-    )
+    out.append("  " + " ".join(f"{r.start}-{r.end}({r.width})" for r in geometry.blank_runs))
 
     out += _section("Reproducing or correcting this geometry")
     out.append("  Pass the following back to get exactly this table again, or edit")

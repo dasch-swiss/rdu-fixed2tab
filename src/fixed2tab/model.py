@@ -15,9 +15,9 @@ from dataclasses import dataclass
 from enum import Enum, IntEnum
 
 __all__ = [
+    "DEFAULT_MIN_GUTTER",
     "BlankRun",
     "Counts",
-    "count_by_reason",
     "Diagnostic",
     "ExitCode",
     "Field",
@@ -28,7 +28,13 @@ __all__ = [
     "RejectedLine",
     "StrictViolation",
     "UsageError",
+    "count_by_reason",
 ]
+
+
+# Blank positions needed to separate two columns. Named once, because the CLI
+# needs to know whether the user changed it and a repeated literal would drift.
+DEFAULT_MIN_GUTTER = 2
 
 
 class ExitCode(IntEnum):
@@ -96,11 +102,6 @@ class RejectReason(Enum):
     CONTROL_CHAR = "control-char"
     PREAMBLE_IDENTITY = "preamble-identity"
     RULE_LINE = "rule-line"
-
-    @classmethod
-    def evaluation_order(cls) -> tuple[RejectReason, ...]:
-        """The criteria in the order they are applied (REQ-2.6)."""
-        return tuple(cls)
 
     @classmethod
     def names(cls) -> tuple[str, ...]:
@@ -176,8 +177,7 @@ class Geometry:
     record_width: int
     fields: tuple[Field, ...]
     blank_runs: tuple[BlankRun, ...] = ()
-    min_gutter: int = 2
-    detected: bool = True  # False when the user supplied --columns
+    min_gutter: int = DEFAULT_MIN_GUTTER
 
     def __post_init__(self) -> None:
         if self.record_width < 1:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import codecs
+import itertools
 import re
 import sys
 from pathlib import Path
@@ -15,6 +16,8 @@ from pathlib import Path
 from fixed2tab import __version__
 from fixed2tab.carve import HeaderMode, write_outputs
 from fixed2tab.detect import (
+    PAD_NEEDS_HEADER_LINE,
+    LengthProfile,
     LineSource,
     ShortLinePolicy,
     blank_runs,
@@ -24,6 +27,7 @@ from fixed2tab.detect import (
 )
 from fixed2tab.header import name_fields
 from fixed2tab.model import (
+    DEFAULT_MIN_GUTTER,
     Diagnostic,
     ExitCode,
     Field,
@@ -57,6 +61,13 @@ examples
               --report geometry.txt --rejected skipped.txt \\
               --columns '1-12:DATE,18-27:BEST_TIME,31-37:DELTAT_s'
 
+  The same columns can be given as widths instead, which is how a FORTRAN
+  FORMAT states them: take 12 positions, skip 5, take 10. These two are
+  equivalent:
+
+    --widths  '12:DATE,5x,10:BEST_TIME'
+    --columns '1-12:DATE,18-27:BEST_TIME'
+
 when a column comes out named colN
 ----------------------------------
   Some files put one heading above several columns — "Jewish Date Scheme" over a
@@ -83,6 +94,18 @@ outputs
   always holds and nothing can disappear unnoticed. The rejected file is often
   empty; that is a result, not a failure.
 
+  The table has no header row unless you pass --header plain; the column names
+  are always in the report. Later steps often address rows by position, and an
+  extra first row would shift every offset by one without anything visibly
+  breaking.
+
+  The rejected file is itself a TSV, one line per rejected input line:
+
+      line number <TAB> reason <TAB> the line, verbatim
+
+  The reason is one of length, control-char, preamble-identity or rule-line —
+  the names --allow-rejects accepts.
+
 positions
 ---------
   Every character position is 1-based and inclusive, in --columns, in the report
@@ -97,9 +120,10 @@ migrating a workflow that used a hand-made conversion
 
 a Galaxy upload hazard
 ----------------------
-  Do not let Galaxy's uploader apply "convert spaces to tabs" to a fixed-width
-  file. It destroys the column positions before this tool ever sees the data. A
-  TAB inside a record is treated as fatal here for that reason.
+  If you use this tool on Galaxy, do not let the uploader apply
+  "convert spaces to tabs" to a fixed-width file. It destroys the column
+  positions before this tool ever sees the data. A TAB inside a record is
+  treated as fatal here for that reason.
 
 exit status
 -----------
@@ -139,8 +163,7 @@ def parse_columns(spec: str, record_width: int) -> tuple[Field, ...]:
             )
         if end > record_width:
             raise UsageError(
-                f"--columns element {element!r} extends past the record width "
-                f"of {record_width}"
+                f"--columns element {element!r} extends past the record width of {record_width}"
             )
         fields.append(Field(start, end, name))
 
@@ -148,11 +171,10 @@ def parse_columns(spec: str, record_width: int) -> tuple[Field, ...]:
         raise UsageError("--columns is empty")
 
     ordered = sorted(fields, key=lambda f: f.start)
-    for left, right in zip(ordered, ordered[1:]):
+    for left, right in itertools.pairwise(ordered):
         if right.start <= left.end:
             raise UsageError(
-                f"--columns ranges {left.start}-{left.end} and "
-                f"{right.start}-{right.end} overlap"
+                f"--columns ranges {left.start}-{left.end} and {right.start}-{right.end} overlap"
             )
     return tuple(fields)
 
@@ -224,56 +246,144 @@ def build_parser() -> argparse.ArgumentParser:
     io_group = parser.add_argument_group("input and outputs (all required)")
     io_group.add_argument("--input", required=True, type=Path, help="fixed-width text file to read")
     io_group.add_argument("--table", required=True, type=Path, help="TSV output")
-    io_group.add_argument("--report", required=True, type=Path, help="geometry report; read this when a boundary looks wrong")
-    io_group.add_argument("--rejected", required=True, type=Path, help="every unparsed line, verbatim, with its input line number")
+    io_group.add_argument(
+        "--report",
+        required=True,
+        type=Path,
+        help="geometry report; read this when a boundary looks wrong",
+    )
+    io_group.add_argument(
+        "--rejected",
+        required=True,
+        type=Path,
+        help="every unparsed line, as a TSV of input line number, rejection reason and "
+        "the line verbatim",
+    )
 
     geo = parser.add_argument_group("geometry")
-    geo.add_argument("--columns", metavar="SPEC", help="explicit columns, e.g. '1-12:DATE,18-27:BEST_TIME'; overrides detection. Positions are 1-based inclusive")
-    geo.add_argument("--widths", metavar="SPEC", help="explicit column widths instead of ranges, e.g. '2x,5,2x,8' — a FORTRAN FORMAT such as 2X,I5,2X,F8.3 transcribes directly. Nx skips N positions; N:NAME names a column. Mutually exclusive with --columns")
-    geo.add_argument("--min-gutter", type=int, default=2, metavar="N", help="blank positions needed to separate two columns (default: 2). Lower splits inside cells like '4h  6m 22s'; higher merges narrow columns")
-    geo.add_argument("--record-width", type=int, metavar="N", help="override the detected record width, e.g. for a file whose trailing blanks were stripped")
-    geo.add_argument("--header-line", type=int, metavar="N", help="1-based line to use as the column headings; also extends the preamble through that line")
+    # One or the other; argparse enforces it at parse time and says so in the
+    # usage line, before anything is read.
+    explicit = geo.add_mutually_exclusive_group()
+    explicit.add_argument(
+        "--columns",
+        metavar="SPEC",
+        help="explicit columns, e.g. '1-12:DATE,18-27:BEST_TIME'; overrides detection. Positions are 1-based inclusive",
+    )
+    explicit.add_argument(
+        "--widths",
+        metavar="SPEC",
+        help="explicit column widths instead of ranges, e.g. '2x,5,2x,8'. Read left to "
+        "right from position 1: a bare N takes the next N positions as a column, N:NAME "
+        "does the same and names it, and Nx skips N positions. A FORTRAN FORMAT such as "
+        "2X,I5,2X,F8.3 transcribes directly. Mutually exclusive with --columns",
+    )
+    geo.add_argument(
+        "--min-gutter",
+        type=int,
+        metavar="N",
+        # Spaces are drawn as "·" because argparse collapses runs of spaces in
+        # option help: a literal '4h  6m 22s' is printed with one space.
+        help="blank positions needed to separate two columns (default: "
+        f"{DEFAULT_MIN_GUTTER}). Lower splits "
+        "inside cells like '4h··6m 22s' (· marks one space); higher merges narrow columns",
+    )
+    geo.add_argument(
+        "--record-width",
+        type=int,
+        metavar="N",
+        help="override the detected record width, e.g. for a file whose trailing blanks were stripped",
+    )
+    geo.add_argument(
+        "--header-line",
+        type=int,
+        metavar="N",
+        help="use line N as the column headings. Lines 1 to N are preamble and are not "
+        "carved as data; 0 means there is no preamble. Required with --short-lines pad",
+    )
 
     read = parser.add_argument_group("reading")
-    read.add_argument("--encoding", default="utf-8", metavar="NAME", help="input encoding (default: utf-8). Try latin-1 for byte-padded legacy output")
-    read.add_argument("--short-lines", choices=ShortLinePolicy.CHOICES, default=ShortLinePolicy.DEFAULT, help="lines shorter than the record width: reject them (default) or pad with spaces. Padding can promote page numbers and footers to data rows, so it is opt-in")
+    read.add_argument(
+        "--encoding",
+        default="utf-8",
+        metavar="NAME",
+        help="input encoding (default: utf-8). Try latin-1 for byte-padded legacy output",
+    )
+    read.add_argument(
+        "--short-lines",
+        choices=[p.value for p in ShortLinePolicy],
+        default=ShortLinePolicy.REJECT.value,
+        help="lines shorter than the record width: reject them (default) or pad with spaces. Padding can promote page numbers and footers to data rows, so it is opt-in",
+    )
 
     out = parser.add_argument_group("output shape")
-    out.add_argument("--collapse-spaces", action="store_true", help="reduce runs of spaces inside each cell to one. Off by default. Applies to EVERY cell, so meaningful internal spacing is flattened too: '4h  6m 22s' becomes '4h 6m 22s'. Useful when a range merges several layout columns into one value, such as a date written as year, month and day")
-    out.add_argument("--header", choices=HeaderMode.CHOICES, default=HeaderMode.DEFAULT, help="write column names as the table's first row, or not (default: none). Names always appear in the report")
+    out.add_argument(
+        "--collapse-spaces",
+        action="store_true",
+        help="reduce runs of spaces inside each cell to one. Off by default. Applies to "
+        "EVERY cell, so meaningful internal spacing is flattened too: '4h··6m 22s' "
+        "becomes '4h·6m 22s' (· marks one space). Useful when a range merges several "
+        "layout columns into one value, such as a date written as year, month and day",
+    )
+    out.add_argument(
+        "--header",
+        choices=[m.value for m in HeaderMode],
+        default=HeaderMode.NONE.value,
+        help="write column names as the table's first row (plain), or not (default: "
+        "none). Off by default because later steps often address rows by position. "
+        "Names always appear in the report",
+    )
 
     strict = parser.add_argument_group("strictness")
-    strict.add_argument("--strict", action="store_true", help="exit non-zero if any line is rejected for a reason not in --allow-rejects")
-    strict.add_argument("--allow-rejects", metavar="R", nargs="*", choices=RejectReason.names(), default=list(RejectReason.names()), help=f"rejection reasons tolerated under --strict (default: all). One or more of: {', '.join(RejectReason.names())}")
+    strict.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit 4 if any line is rejected, except for the reasons listed in --allow-rejects",
+    )
+    strict.add_argument(
+        "--allow-rejects",
+        metavar="R",
+        nargs="*",
+        choices=RejectReason.names(),
+        # Empty, so that --strict on its own is strict. Defaulting to every
+        # reason made the bare flag inert: it could never trip, and the
+        # safe-looking invocation was the one that did nothing.
+        default=[],
+        help="rejection reasons tolerated under --strict (default: none). One or more "
+        f"of: {', '.join(RejectReason.names())}",
+    )
     return parser
 
 
-def _encoding_diagnostic(source: LineSource, char_widths: int) -> Diagnostic | None:
+def _encoding_diagnostic(profile: LengthProfile, encoding: str) -> Diagnostic | None:
     """Warn when byte lengths are uniform but character lengths are not.
 
     That combination means the generating program padded by bytes while the
     chosen encoding is multi-byte, so character offsets no longer line up with
-    the columns. The output would be quietly wrong rather than visibly broken,
-    which is the failure mode worth spending a pass to catch.
+    the columns. The output would be quietly wrong rather than visibly broken.
+    Pass 1 measures both lengths, so the check costs no extra read.
     """
-    byte_hist = source.byte_lengths()
-    if len(byte_hist) == 1 and char_widths > 1:
+    if profile.byte_uniform and len(profile.histogram) > 1:
         return Diagnostic(
             "byte-vs-char",
             "every line has the same length in bytes but not in characters "
-            f"under --encoding {source.encoding}. The file is probably "
+            f"under --encoding {encoding}. The file is probably "
             "byte-padded legacy output; try --encoding latin-1.",
         )
     return None
 
 
 def run(args: argparse.Namespace) -> int:
-    if args.min_gutter < 1:
-        raise UsageError(f"--min-gutter must be at least 1, got {args.min_gutter}")
+    min_gutter = DEFAULT_MIN_GUTTER if args.min_gutter is None else args.min_gutter
+    if min_gutter < 1:
+        raise UsageError(f"--min-gutter must be at least 1, got {min_gutter}")
     if args.record_width is not None and args.record_width < 1:
         raise UsageError(f"--record-width must be at least 1, got {args.record_width}")
-    if args.header_line is not None and args.header_line < 1:
-        raise UsageError(f"--header-line is 1-based, got {args.header_line}")
+    if args.header_line is not None and args.header_line < 0:
+        raise UsageError(f"--header-line is 1-based, or 0 for no preamble; got {args.header_line}")
+    short_lines = ShortLinePolicy(args.short_lines)
+    header_mode = HeaderMode(args.header)
+    if short_lines == ShortLinePolicy.PAD and args.header_line is None:
+        raise UsageError(PAD_NEEDS_HEADER_LINE)
     try:
         codecs.lookup(args.encoding)
     except LookupError as exc:
@@ -283,12 +393,10 @@ def run(args: argparse.Namespace) -> int:
 
     profile, diagnostics = profile_lengths(source)
     width = args.record_width or profile.record_width
-    if enc_note := _encoding_diagnostic(source, len(profile.histogram)):
+    if enc_note := _encoding_diagnostic(profile, args.encoding):
         diagnostics.append(enc_note)
 
-    classified, class_notes = classify_input(
-        source, width, args.short_lines, args.header_line
-    )
+    classified, class_notes = classify_input(source, width, short_lines, args.header_line)
     diagnostics += class_notes
 
     if classified.counts.table_rows == 0:
@@ -304,7 +412,8 @@ def run(args: argparse.Namespace) -> int:
             + "\n  rejected by reason: "
             + ", ".join(f"{k}={v}" for k, v in classified.by_reason.items() if v)
             + "\n  If the width is wrong, set --record-width; if records are "
-            "shorter than it, add --short-lines pad."
+            "shorter than it, add --short-lines pad together with "
+            "--header-line N."
         )
 
     if classified.counts.table_rows < 6 and not args.columns:
@@ -325,8 +434,6 @@ def run(args: argparse.Namespace) -> int:
     # per-field blank rate and a run listing, and those are how a user judges
     # whether their supplied geometry is right.
     runs = blank_runs(classified.blank)
-    if args.columns is not None and args.widths is not None:
-        raise UsageError("--columns and --widths both describe the geometry; supply one")
     # Tested against None, not truthiness: an explicitly empty value is a
     # mistake to report, not a reason to quietly fall back to detection.
     if args.columns is not None or args.widths is not None:
@@ -364,7 +471,7 @@ def run(args: argparse.Namespace) -> int:
                     f"no --columns range and will be dropped: {', '.join(spans)}",
                 )
             )
-        if args.min_gutter != 2:
+        if args.min_gutter is not None:
             diagnostics.append(
                 Diagnostic(
                     "min-gutter-ignored",
@@ -373,13 +480,13 @@ def run(args: argparse.Namespace) -> int:
                 )
             )
     else:
-        fields, runs = derive_fields(classified.blank, args.min_gutter)
+        fields, runs = derive_fields(classified.blank, min_gutter)
         detected = True
         if len(fields) == 1:
             diagnostics.append(
                 Diagnostic(
                     "single-field",
-                    f"no run of {args.min_gutter} or more blank positions was "
+                    f"no run of {min_gutter} or more blank positions was "
                     "found, so the whole record is one column. Lower "
                     "--min-gutter if the columns are separated by a single "
                     "space, or supply --columns.",
@@ -401,9 +508,7 @@ def run(args: argparse.Namespace) -> int:
     # a date written as year, month and day. Whitespace cannot express that
     # grouping, so detection splits them and the outer ones end up unnamed. Say
     # so, without pretending to know which ones belong together.
-    headingless = [
-        i + 1 for i, f in enumerate(named) if f.name and re.fullmatch(r"col\d+", f.name)
-    ]
+    headingless = [i + 1 for i, f in enumerate(named) if f.name and re.fullmatch(r"col\d+", f.name)]
     if headingless and classified.preamble.header and detected:
         diagnostics.append(
             Diagnostic(
@@ -415,7 +520,7 @@ def run(args: argparse.Namespace) -> int:
             )
         )
 
-    geometry = Geometry(width, named, runs, args.min_gutter, detected)
+    geometry = Geometry(width, named, runs, min_gutter)
 
     counts, stats, by_reason = write_outputs(
         source,
@@ -423,20 +528,20 @@ def run(args: argparse.Namespace) -> int:
         classified.preamble,
         args.table,
         args.rejected,
-        args.short_lines,
+        short_lines,
         args.header_line,
-        args.header,
+        header_mode,
         args.collapse_spaces,
     )
     parameters = {
         "collapse-spaces": args.collapse_spaces,
         "columns": args.columns or "(detected)",
         "encoding": args.encoding,
-        "header": args.header,
-        "header-line": args.header_line if args.header_line else "(auto)",
-        "min-gutter": args.min_gutter,
+        "header": header_mode,
+        "header-line": args.header_line if args.header_line is not None else "(auto)",
+        "min-gutter": min_gutter,
         "record-width": args.record_width if args.record_width else "(detected)",
-        "short-lines": args.short_lines,
+        "short-lines": short_lines,
         "strict": args.strict,
         "widths": args.widths or "(not used)",
     }

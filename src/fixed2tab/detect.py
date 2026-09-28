@@ -1,58 +1,72 @@
-"""Reading the input and pass 1: the line model and the record width.
+"""Reading the input, and the first two of the parser's three passes.
 
 The parser makes three streaming passes and never holds the file in memory:
 
-1. length histogram, and locating the first record-width line
+1. length histograms, in characters and in bytes, and the record width
 2. classification, preamble collection, and the blank map
-3. carving
+3. carving — in ``carve``
 
-Only pass 1 lives here so far. Its state is proportional to the number of
-*distinct* line lengths, not to the number of lines.
+Pass 1's state is proportional to the number of *distinct* line lengths, not
+to the number of lines.
 """
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 from fixed2tab.header import Preamble, build_preamble
 from fixed2tab.model import (
+    DEFAULT_MIN_GUTTER,
     BlankRun,
     Counts,
     Diagnostic,
-    InputError,
-    RejectReason,
     Field,
+    InputError,
     RejectedLine,
+    RejectReason,
     UsageError,
     count_by_reason,
 )
 
 __all__ = [
+    "PAD_NEEDS_HEADER_LINE",
     "ClassifiedInput",
     "LengthProfile",
     "LineSource",
     "ShortLinePolicy",
-    "classify_input",
     "blank_runs",
+    "classify_input",
     "classify_line",
     "derive_fields",
     "detect_record_width",
     "has_control_char",
+    "preamble_continues",
+    "preamble_reason",
     "profile_lengths",
 ]
 
-BOM = "﻿"
+BOM = "\ufeff"  # written as an escape: the literal is invisible
 
 # Classes of control character that mark a line as non-record (REQ-2.8). TAB is
 # excluded here because it gets its own fatal treatment: a TAB inside a record
 # would silently corrupt the TSV, which is the failure this tool exists to stop.
-CONTROL_RANGES = ((0x00, 0x08), (0x0B, 0x1F), (0x7F, 0x9F))
+PAD_NEEDS_HEADER_LINE = (
+    "--short-lines pad needs --header-line. Under padding the records are "
+    "shorter than the record width, so the preamble cannot be found by line "
+    "length: leading records would be absorbed into it and one of them used as "
+    "the column headings. Pass --header-line N, where N is the line holding the "
+    "column headings, or --header-line 0 if the file has none."
+)
+
+CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
-class ShortLinePolicy:
+class ShortLinePolicy(str, Enum):
     """What to do with lines shorter than the record width.
 
     Many real fixed-width files have trailing blanks stripped, so records come
@@ -72,12 +86,24 @@ class ShortLinePolicy:
     genuinely is right-trimmed, pass 1 recognises the signature and the report
     says so, naming ``--short-lines pad`` — an explicit opt-in, on a file the
     user has been told about.
+
+    **Padding also requires ``--header-line``.** The length-based preamble
+    boundary cannot work under padding: records are shorter than the width by
+    definition, so every record before the first full-width one was absorbed
+    into the preamble, and the last of them became the header. Following the
+    report's own advice on an eight-record file produced four rows, exit 0 and
+    a reconciliation that balanced. Requiring the boundary to be stated makes
+    that loss impossible rather than merely warned about.
     """
 
+    REJECT = "reject"  # the default
     PAD = "pad"
-    REJECT = "reject"
-    CHOICES = (REJECT, PAD)
-    DEFAULT = REJECT
+
+    def __str__(self) -> str:
+        # The value, not "ShortLinePolicy.PAD", in the report and in --help —
+        # and identically on every supported Python, where Enum formatting of
+        # str mixins changed in 3.12.
+        return self.value
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,14 +115,20 @@ class LengthProfile:
     max_length: int
     record_width: int
     tied_lengths: tuple[int, ...] = ()
+    byte_uniform: bool = False  # every line has the same length in bytes
+
+    def lines_at(self, width: int) -> int:
+        """How many lines have exactly ``width`` characters."""
+        return dict(self.histogram).get(width, 0)
+
+    def share_at(self, width: int) -> float:
+        """Fraction of lines having exactly ``width`` characters."""
+        return self.lines_at(width) / self.total_lines if self.total_lines else 0.0
 
     @property
     def width_share(self) -> float:
         """Fraction of lines having the detected record width."""
-        if not self.total_lines:
-            return 0.0
-        counts = dict(self.histogram)
-        return counts.get(self.record_width, 0) / self.total_lines
+        return self.share_at(self.record_width)
 
     @property
     def looks_right_trimmed(self) -> bool:
@@ -134,6 +166,15 @@ class LineSource:
         self.encoding = encoding
 
     def __iter__(self) -> Iterator[tuple[int, str]]:
+        for number, text, _n_bytes in self._lines():
+            yield number, text
+
+    def _lines(self) -> Iterator[tuple[int, str, int]]:
+        """Each line with its number, its text, and its length in bytes.
+
+        The byte length is for the encoding diagnostic (REQ-1.10). Measuring it
+        here, in pass 1, is what spares that diagnostic a pass of its own.
+        """
         try:
             handle = self.path.open("rb")
         except OSError as exc:
@@ -159,19 +200,7 @@ class LineSource:
                     # make line 1 one character longer, shifting the histogram
                     # and with it the preamble boundary and the header.
                     text = text[len(BOM) :]
-                yield number, text
-
-    def byte_lengths(self) -> Counter[int]:
-        """Line lengths in *bytes*, for the encoding diagnostic (REQ-1.10)."""
-        lengths: Counter[int] = Counter()
-        with self.path.open("rb") as handle:
-            for raw in handle:
-                if raw.endswith(b"\n"):
-                    raw = raw[:-1]
-                if raw.endswith(b"\r"):
-                    raw = raw[:-1]
-                lengths[len(raw)] += 1
-        return lengths
+                yield number, text, len(raw)
 
 
 def detect_record_width(histogram: Counter[int]) -> tuple[int, tuple[int, ...]]:
@@ -193,9 +222,11 @@ def detect_record_width(histogram: Counter[int]) -> tuple[int, tuple[int, ...]]:
 def profile_lengths(source: LineSource) -> tuple[LengthProfile, list[Diagnostic]]:
     """Pass 1. Build the length histogram and derive the record width."""
     histogram: Counter[int] = Counter()
+    byte_lengths: set[int] = set()
     total = 0
-    for _number, text in source:
+    for _number, text, n_bytes in source._lines():
         histogram[len(text)] += 1
+        byte_lengths.add(n_bytes)
         total += 1
 
     if total == 0:
@@ -212,6 +243,7 @@ def profile_lengths(source: LineSource) -> tuple[LengthProfile, list[Diagnostic]
         max_length=max(histogram),
         record_width=width,
         tied_lengths=tied,
+        byte_uniform=len(byte_lengths) == 1,
     )
 
     diagnostics: list[Diagnostic] = []
@@ -240,7 +272,9 @@ def profile_lengths(source: LineSource) -> tuple[LengthProfile, list[Diagnostic]
                 "which is the signature of a file whose trailing blanks were "
                 f"stripped. Records shorter than the detected width will be "
                 "REJECTED, not padded. To parse this file, pass "
-f"--record-width {profile.max_length} --short-lines pad.",
+                f"--record-width {profile.max_length} --short-lines pad "
+                "--header-line N, where N is the line holding the column "
+                "headings (0 if there are none).",
             )
         )
     return profile, diagnostics
@@ -253,14 +287,14 @@ def has_control_char(text: str) -> bool:
     TAB is excluded deliberately — inside a record it is fatal rather than a
     reason to skip the line, because emitting it would corrupt the TSV.
     """
-    return any(any(lo <= ord(ch) <= hi for lo, hi in CONTROL_RANGES) for ch in text)
+    return CONTROL_RE.search(text) is not None
 
 
 def classify_line(
     text: str,
     record_width: int,
     preamble_rstripped: frozenset[str],
-    short_policy: str = ShortLinePolicy.DEFAULT,
+    short_policy: ShortLinePolicy = ShortLinePolicy.REJECT,
     past_preamble: bool = True,
 ) -> tuple[str | None, RejectReason | None]:
     """Classify one line, returning either its record text or a rejection reason.
@@ -276,11 +310,7 @@ def classify_line(
     thresholded earlier design silently discarded every intercalary-day record.
     """
     if len(text) != record_width:
-        if (
-            short_policy == ShortLinePolicy.PAD
-            and past_preamble
-            and len(text) < record_width
-        ):
+        if short_policy == ShortLinePolicy.PAD and past_preamble and len(text) < record_width:
             text = text.ljust(record_width)
         else:
             return None, RejectReason.LENGTH
@@ -311,24 +341,61 @@ class ClassifiedInput:
     rejected: tuple[RejectedLine, ...]
     counts: Counts
     blank: tuple[bool, ...] = ()
-    padded_lines: int = 0
 
     @property
     def by_reason(self) -> dict[str, int]:
         return count_by_reason(self.rejected)
 
 
+def preamble_continues(number: int, text: str, record_width: int, header_line: int | None) -> bool:
+    """Whether line ``number`` still belongs to the preamble (REQ-0.7).
+
+    The single definition of the preamble boundary. Pass 2 and pass 3 both call
+    it, so the two cannot disagree about where the data starts.
+
+    Without ``--header-line`` the preamble is the leading lines whose length
+    differs from the record width. Length equality is exact even when
+    ``--short-lines pad`` is active: if padding were applied first, the
+    reference file's 37-character title and 121-character heading would both
+    pad out to 128, become records, and be carved as data — losing the header
+    entirely. Padding is a repair for lines *after* the boundary, never a way
+    into it.
+
+    An explicit ``--header-line`` ends the preamble *at that line*, regardless
+    of its length. Without this the flag is not the escape hatch REQ-0.7b
+    claims: a heading that happens to match the record width never enters the
+    preamble, so it is carved as a data row and there is no way to say
+    otherwise.
+    """
+    if header_line is not None:
+        return number <= header_line
+    return len(text) != record_width
+
+
+def preamble_reason(text: str, record_width: int) -> RejectReason:
+    """The reason a preamble line is reported under in the rejected file.
+
+    A forced preamble line may legitimately be record-width — that is the case
+    ``--header-line`` exists for — so attribute by what is true of the line
+    rather than assuming a length mismatch.
+    """
+    return RejectReason.LENGTH if len(text) != record_width else RejectReason.PREAMBLE_IDENTITY
+
+
 def classify_input(
     source: LineSource,
     record_width: int,
-    short_policy: str = ShortLinePolicy.DEFAULT,
+    short_policy: ShortLinePolicy = ShortLinePolicy.REJECT,
     header_line: int | None = None,
 ) -> tuple[ClassifiedInput, list[Diagnostic]]:
     """Pass 2. Split the input into records and rejects, and find the header.
 
     Streams once. The preamble is bounded by construction — it ends at the first
-    record-width line — so memory does not grow with the file.
+    record-width line, or at ``header_line`` — so memory does not grow with the
+    file.
     """
+    if short_policy == ShortLinePolicy.PAD and header_line is None:
+        raise UsageError(PAD_NEEDS_HEADER_LINE)
     preamble_acc: list[tuple[int, str]] = []
     in_preamble = True
     preamble = Preamble()
@@ -347,33 +414,9 @@ def classify_input(
         total += 1
 
         if in_preamble:
-            # An explicit --header-line extends the preamble through that line
-            # regardless of its length. Without this the flag is not the escape
-            # hatch REQ-0.7b claims: a heading that happens to match the record
-            # width never enters the preamble, so it is carved as a data row and
-            # there is no way to say otherwise.
-            # With --header-line the preamble ends *at that line*. Anchoring on
-            # the first record-width line instead does not work: under
-            # --short-lines pad the records are shorter than the width, so no
-            # line matches exactly and everything stays in the preamble. An
-            # earlier version of this fix extended the preamble without moving
-            # the boundary and produced zero records.
-            still_preamble = (
-                number <= header_line
-                if header_line is not None
-                else len(text) != record_width
-            )
-            if still_preamble:
+            if preamble_continues(number, text, record_width, header_line):
                 preamble_acc.append((number, text))
-                # A forced preamble line may legitimately be record-width — that
-                # is the case --header-line exists for — so attribute by what is
-                # true of the line rather than assuming a length mismatch.
-                reason = (
-                    RejectReason.LENGTH
-                    if len(text) != record_width
-                    else RejectReason.PREAMBLE_IDENTITY
-                )
-                rejected.append(RejectedLine(number, text, reason))
+                rejected.append(RejectedLine(number, text, preamble_reason(text, record_width)))
                 continue
             in_preamble = False
             preamble = build_preamble(preamble_acc, header_line)
@@ -386,6 +429,17 @@ def classify_input(
             rejected.append(RejectedLine(number, text, reason))
             continue
         assert record is not None
+        if "\t" in record:
+            # Checked here in pass 2, before any output file is opened, so a
+            # fatal TAB leaves no truncated table behind for a later step to
+            # consume as if it were complete.
+            raise InputError(
+                f"line {number} contains a TAB. Fixed-width input must not, "
+                "because emitting it would shift every later column in the "
+                "output and corrupt the table silently. If this file came "
+                "through a Galaxy upload, check that 'convert spaces to "
+                "tabs' was not applied."
+            )
         if before < record_width:
             padded += 1
         n_records += 1
@@ -397,9 +451,7 @@ def classify_input(
         # No line ever matched the record width: everything is preamble.
         preamble = build_preamble(preamble_acc, header_line)
 
-    counts = Counts(
-        input_lines=total, table_rows=n_records, rejected_lines=len(rejected)
-    )
+    counts = Counts(input_lines=total, table_rows=n_records, rejected_lines=len(rejected))
 
     diagnostics: list[Diagnostic] = []
     if padded:
@@ -414,18 +466,16 @@ def classify_input(
             diagnostics.append(
                 Diagnostic(
                     "padding-and-preamble",
-                    "padding is active and this file has a preamble. The preamble "
-                    "boundary uses exact line lengths, so a short *first* record "
-                    "would be absorbed into it. Check the header shown above, and "
-                    "use --header-line or --record-width if it is wrong.",
+                    f"padding is active, so the preamble is lines 1-{len(preamble.lines)} "
+                    f"as set by --header-line {header_line}, and the column headings "
+                    f"are taken from {preamble.header!r}. If that is not the heading "
+                    "line, change --header-line.",
                 )
             )
     if not n_records:
-        diagnostics.append(
-            Diagnostic("no-records", "no line was classified as a record.")
-        )
+        diagnostics.append(Diagnostic("no-records", "no line was classified as a record."))
     return (
-        ClassifiedInput(preamble, tuple(rejected), counts, tuple(blank), padded),
+        ClassifiedInput(preamble, tuple(rejected), counts, tuple(blank)),
         diagnostics,
     )
 
@@ -454,7 +504,7 @@ def blank_runs(blank: tuple[bool, ...]) -> tuple[BlankRun, ...]:
 
 
 def derive_fields(
-    blank: tuple[bool, ...], min_gutter: int = 2
+    blank: tuple[bool, ...], min_gutter: int = DEFAULT_MIN_GUTTER
 ) -> tuple[tuple[Field, ...], tuple[BlankRun, ...]]:
     """Split the record into fields at blank runs of at least ``min_gutter``.
 

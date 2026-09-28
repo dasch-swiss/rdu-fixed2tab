@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
-from conftest import EXPECTED_NAMES, REFERENCE_TSV, REFERENCE_TXT, needs_reference
+from helpers import EXPECTED_NAMES, REFERENCE_TSV, REFERENCE_TXT, needs_reference
 
 from fixed2tab.cli import build_parser, main, parse_columns
-from fixed2tab.model import ExitCode, UsageError
+from fixed2tab.model import ExitCode, RejectReason, UsageError
 
 
 def convert(tmp_path, source, *extra, prefix="out"):
@@ -16,10 +16,14 @@ def convert(tmp_path, source, *extra, prefix="out"):
     rejected = tmp_path / f"{prefix}.rejected.txt"
     status = main(
         [
-            "--input", str(source),
-            "--table", str(table),
-            "--report", str(report),
-            "--rejected", str(rejected),
+            "--input",
+            str(source),
+            "--table",
+            str(table),
+            "--report",
+            str(report),
+            "--rejected",
+            str(rejected),
             *extra,
         ]
     )
@@ -43,10 +47,10 @@ def test_clean_fixture_matches_expected_tsv(tmp_path, clean, expected_tsv):
 @pytest.mark.req("REQ-3.2")
 def test_reconciliation_is_stated_in_the_report(tmp_path, messy):
     _s, table, report, rejected = convert(tmp_path, messy)
-    rows = table.read_text().rstrip("\n").split("\n")
-    rejects = rejected.read_text().rstrip("\n").split("\n")
+    rows = table.read_text(encoding="utf-8").rstrip("\n").split("\n")
+    rejects = rejected.read_text(encoding="utf-8").rstrip("\n").split("\n")
     assert len(rows) + len(rejects) == 16
-    assert "[OK]" in report.read_text()
+    assert "[OK]" in report.read_text(encoding="utf-8")
 
 
 @pytest.mark.req("REQ-0.6")
@@ -57,7 +61,7 @@ def test_messy_fixture_warns_about_width_share(tmp_path, messy):
     different quantity from the one REQ-0.6 measures.
     """
     _s, _t, report, _j = convert(tmp_path, messy)
-    assert "width-share" in report.read_text()
+    assert "width-share" in report.read_text(encoding="utf-8")
 
 
 @pytest.mark.req("REQ-4.2")
@@ -66,11 +70,11 @@ def test_columns_string_round_trips(tmp_path, clean):
     _s, table, report, _j = convert(tmp_path, clean, prefix="first")
     spec = next(
         line.split("--columns", 1)[1].strip().strip("'")
-        for line in report.read_text().split("\n")
+        for line in report.read_text(encoding="utf-8").split("\n")
         if "--columns" in line and line.strip().startswith("--columns")
     )
     _s2, table2, _r2, _j2 = convert(tmp_path, clean, "--columns", spec, prefix="second")
-    assert table2.read_text() == table.read_text()
+    assert table2.read_text(encoding="utf-8") == table.read_text(encoding="utf-8")
 
 
 @pytest.mark.req("REQ-0.11")
@@ -97,13 +101,13 @@ def test_determinism_across_paths(tmp_path, clean):
 @pytest.mark.req("REQ-5.5")
 def test_header_plain_writes_names(tmp_path, clean):
     _s, table, _r, _j = convert(tmp_path, clean, "--header", "plain")
-    assert table.read_text().split("\n")[0].split("\t") == EXPECTED_NAMES
+    assert table.read_text(encoding="utf-8").split("\n")[0].split("\t") == EXPECTED_NAMES
 
 
 @pytest.mark.req("REQ-5.4")
 def test_header_omitted_by_default(tmp_path, clean):
     _s, table, _r, _j = convert(tmp_path, clean)
-    assert not table.read_text().startswith("DATE\t")
+    assert not table.read_text(encoding="utf-8").startswith("DATE\t")
 
 
 @pytest.mark.req("REQ-4.9")
@@ -150,22 +154,23 @@ def test_no_records_exits_input_error(tmp_path):
     assert status == ExitCode.INPUT
 
 
-@pytest.mark.req("REQ-0.12")
-def test_tab_in_a_record_is_fatal(tmp_path):
-    f = tmp_path / "tabbed.txt"
-    f.write_text("heading here\naaa 11\tbb 22\naaa 11 bb 222\n", encoding="ascii")
-    status, *_ = convert(tmp_path, f)
-    assert status in (ExitCode.INPUT, ExitCode.SUCCESS)  # fatal when it is a record
-
-
 @pytest.mark.req("REQ-3.4")
-def test_strict_trips_on_a_disallowed_reason(tmp_path, clean):
-    allowed, *_ = convert(tmp_path, clean, "--strict", prefix="allowed")
-    assert allowed == ExitCode.SUCCESS
+def test_strict_trips_on_a_disallowed_reason(tmp_path, clean, capsys):
+    """--strict alone fails on any rejection; --allow-rejects relaxes it.
+
+    The clean fixture rejects its two preamble lines, both as ``length``.
+    """
+    bare, *_ = convert(tmp_path, clean, "--strict", prefix="bare")
+    assert bare == ExitCode.STRICT
+    assert "2 line(s) rejected as length" in capsys.readouterr().err
     tripped, *_ = convert(
         tmp_path, clean, "--strict", "--allow-rejects", "rule-line", prefix="tripped"
     )
     assert tripped == ExitCode.STRICT
+    allowed, *_ = convert(
+        tmp_path, clean, "--strict", "--allow-rejects", "length", prefix="allowed"
+    )
+    assert allowed == ExitCode.SUCCESS
 
 
 @pytest.mark.req("REQ-3.7")
@@ -173,7 +178,7 @@ def test_small_sample_warns(tmp_path):
     f = tmp_path / "few.txt"
     f.write_text("heading row\n" + "\n".join(["aa 11  bb 2"] * 3) + "\n", encoding="ascii")
     _s, _t, report, _j = convert(tmp_path, f)
-    assert "under-determined" in report.read_text()
+    assert "under-determined" in report.read_text(encoding="utf-8")
 
 
 @pytest.mark.req("REQ-1.13")
@@ -193,6 +198,20 @@ def test_help_documents_every_option_and_the_hazards():
     assert "reduce that number" in lowered  # the positional-offset migration note
     assert "1-based" in lowered
     assert "exit status" in lowered
+    for reason in RejectReason.names():
+        assert reason in text  # the rejected file's reason column is documented
+
+
+def test_help_examples_survive_rendering():
+    """argparse collapses runs of spaces in option help before printing it.
+
+    A literal '4h  6m 22s' was therefore shown with one space, so the example
+    that demonstrates --collapse-spaces could not demonstrate it. Wrapping is
+    normalised here; the spaces inside the examples are what is asserted.
+    """
+    flat = " ".join(build_parser().format_help().split())
+    assert "'4h··6m 22s' becomes '4h·6m 22s' (· marks one space)" in flat
+    assert "inside cells like '4h··6m 22s'" in flat
 
 
 @needs_reference
@@ -213,14 +232,14 @@ def test_golden_reference_conversion(tmp_path):
 
     assert sum(1 for row in mine if "epagomene" in row) == 677
     assert sum(1 for row in mine if row.split("\t")[8].strip()) == 822
-    assert len(rejected.read_text().rstrip("\n").split("\n")) == 2
+    assert len(rejected.read_text(encoding="utf-8").rstrip("\n").split("\n")) == 2
 
 
 @pytest.mark.req("REQ-4.3")
 def test_columns_still_reports_the_blank_run_scan(tmp_path, clean):
     """Supplying --columns must not suppress the scan the report depends on."""
     _s, _t, report, _j = convert(tmp_path, clean, "--columns", "1-12,18-27")
-    text = report.read_text()
+    text = report.read_text(encoding="utf-8")
     assert "Blank runs" in text
     assert "13-17(5)" in text  # a real run from the reference geometry
 
@@ -229,7 +248,7 @@ def test_columns_still_reports_the_blank_run_scan(tmp_path, clean):
 def test_columns_warns_about_uncovered_data(tmp_path, clean):
     """Line reconciliation conserves lines; only this conserves characters."""
     _s, _t, report, _j = convert(tmp_path, clean, "--columns", "1-12:DATE,18-27:TIME")
-    text = report.read_text()
+    text = report.read_text(encoding="utf-8")
     assert "uncovered-positions" in text
     # Reported as ranges, and complete — the sparse `code` column at 92-93 sits
     # far to the right and would be hidden by any truncated list of positions.
@@ -246,9 +265,9 @@ def test_empty_preamble_still_emits_three_outputs(tmp_path):
     f.write_text("\n".join(rows) + "\n", encoding="ascii")
     status, table, report, rejected = convert(tmp_path, f)
     assert status == ExitCode.SUCCESS
-    assert rejected.exists() and rejected.read_text() == ""
-    assert len(table.read_text().rstrip("\n").split("\n")) == 8
-    assert "no-header" in report.read_text()
+    assert rejected.exists() and rejected.read_text(encoding="utf-8") == ""
+    assert len(table.read_text(encoding="utf-8").rstrip("\n").split("\n")) == 8
+    assert "no-header" in report.read_text(encoding="utf-8")
 
 
 @pytest.mark.req("REQ-0.4")
@@ -259,7 +278,7 @@ def test_tied_lengths_recorded_in_the_report(tmp_path):
     long_ = "aa 11  bb 222"
     f.write_text("\n".join([short] * 3 + [long_] * 3) + "\n", encoding="ascii")
     _s, _t, report, _j = convert(tmp_path, f)
-    text = report.read_text()
+    text = report.read_text(encoding="utf-8")
     assert "width-tie" in text
     assert f"record width     {len(long_)}" in text
 
@@ -284,15 +303,24 @@ def test_undecodable_input_exits_input_error_naming_the_line(tmp_path, capsys):
 
 
 @pytest.mark.req("REQ-0.12")
-def test_tab_in_a_record_is_fatal_with_a_pointed_message(tmp_path, capsys):
+def test_tab_in_a_record_is_fatal(tmp_path, capsys):
+    """Fatal, pointed, and before any output exists.
+
+    The tabbed line is padded to the record width and carries digits, so it
+    passes every classification criterion: it is provably a record, and only
+    the TAB guard can stop it.
+    """
     good = "aaa 111  bbb 22"
-    tabbed = "aaa 111\tbbb 22"
+    tabbed = "aaa 111\tbbb 22".ljust(len(good))
     f = tmp_path / "tabbed.txt"
-    f.write_text("heading\n" + "\n".join([good, good, tabbed.ljust(len(good)), good]) + "\n", encoding="ascii")
-    status, *_ = convert(tmp_path, f)
+    f.write_text(f"heading\n{good}\n{good}\n{tabbed}\n{good}\n", encoding="ascii")
+    status, table, report, rejected = convert(tmp_path, f)
+    assert status == ExitCode.INPUT
     err = capsys.readouterr().err
-    if status == ExitCode.INPUT:
-        assert "TAB" in err and "convert spaces to tabs" in err
+    assert "line 4" in err
+    assert "TAB" in err and "convert spaces to tabs" in err
+    # No truncated table for a later pipeline step to mistake for a result.
+    assert not any(p.exists() for p in (table, report, rejected))
 
 
 @pytest.mark.req("REQ-4.11")
@@ -305,7 +333,7 @@ def test_widths_equal_the_equivalent_columns(tmp_path, clean):
     _s2, by_widths, _r2, _j2 = convert(
         tmp_path, clean, "--widths", "12:DATE,5x,10:TIME", prefix="widths"
     )
-    assert by_widths.read_text() == by_columns.read_text()
+    assert by_widths.read_text(encoding="utf-8") == by_columns.read_text(encoding="utf-8")
 
 
 @pytest.mark.req("REQ-4.11")
@@ -335,8 +363,16 @@ def test_collapse_spaces_is_opt_in_and_global(tmp_path, clean):
     _s2, collapsed, _r2, _j2 = convert(tmp_path, clean, "--collapse-spaces", prefix="collapsed")
     # Asserted as a property rather than on one hand-picked cell: some cell must
     # carry a run of two spaces when off, and none may when on.
-    verbatim_cells = [c for row in verbatim.read_text().rstrip("\n").split("\n") for c in row.split("\t")]
-    collapsed_cells = [c for row in collapsed.read_text().rstrip("\n").split("\n") for c in row.split("\t")]
+    verbatim_cells = [
+        c
+        for row in verbatim.read_text(encoding="utf-8").rstrip("\n").split("\n")
+        for c in row.split("\t")
+    ]
+    collapsed_cells = [
+        c
+        for row in collapsed.read_text(encoding="utf-8").rstrip("\n").split("\n")
+        for c in row.split("\t")
+    ]
     assert any("  " in c for c in verbatim_cells), "fixture has no multi-space cell to test"
     assert not any("  " in c for c in collapsed_cells)
     # and the collapse is only whitespace: the tokens themselves are untouched
@@ -351,7 +387,7 @@ def test_headingless_fields_are_flagged(tmp_path):
     # A single heading sitting above only the middle of three columns.
     f.write_text("           GROUP LABEL\n" + "\n".join(rows) + "\n", encoding="ascii")
     _s, _t, report, _j = convert(tmp_path, f)
-    assert "fields-without-heading" in report.read_text()
+    assert "fields-without-heading" in report.read_text(encoding="utf-8")
 
 
 @pytest.mark.req("REQ-5.8")
@@ -367,11 +403,186 @@ def test_supplied_names_suppress_stale_naming_warnings(tmp_path):
     f.write_text("  VAL    VAL    VAL\n" + "\n".join(rows) + "\n", encoding="ascii")
 
     _s, _t, derived_report, _j = convert(tmp_path, f, prefix="derived")
-    assert "duplicate-names" in derived_report.read_text()
+    assert "duplicate-names" in derived_report.read_text(encoding="utf-8")
 
     _s2, _t2, named_report, _j2 = convert(
         tmp_path, f, "--columns", "2-5:First,8-12:Second,15-19:Third", prefix="named"
     )
-    text = named_report.read_text()
+    text = named_report.read_text(encoding="utf-8")
     assert "duplicate-names" not in text
     assert "header-token-discarded" not in text  # those tokens named the fields
+
+
+# The right-trimmed workflow, end to end. Rows of varied length, none as long as
+# the longest, so detection picks the mode and the report advises padding.
+TRIMMED_HEADING = "  ID   NAME    VAL"
+TRIMMED_ROWS = [
+    "  1  a      1",
+    "  2  bb     22",
+    "  3  ccc    333",
+    "  4  d      4",
+    "  5  eeeee  55555",
+    "  6  ff     6",
+    "  7  g      77",
+    "  8  hhhhhh 8888888",
+]
+
+
+@pytest.fixture
+def trimmed(tmp_path):
+    f = tmp_path / "trim.txt"
+    f.write_text("\n".join([TRIMMED_HEADING, *TRIMMED_ROWS]) + "\n", encoding="ascii")
+    return f
+
+
+@pytest.mark.req("REQ-0.7b")
+def test_right_trimmed_advice_names_header_line(tmp_path, trimmed):
+    """The printed remediation must be one that works when followed verbatim."""
+    status, _t, report, _j = convert(tmp_path, trimmed)
+    assert status == ExitCode.SUCCESS
+    advice = next(
+        ln for ln in report.read_text(encoding="utf-8").split("\n") if "[right-trimmed]" in ln
+    )
+    assert "--short-lines pad --header-line N" in advice
+
+
+@pytest.mark.req("REQ-0.7b")
+def test_padding_without_header_line_is_a_usage_error(tmp_path, trimmed, capsys):
+    """Without a stated boundary, padding silently promoted a record to the header."""
+    status, table, report, rejected = convert(
+        tmp_path, trimmed, "--record-width", "19", "--short-lines", "pad"
+    )
+    assert status == ExitCode.USAGE
+    assert "--header-line" in capsys.readouterr().err
+    assert not any(p.exists() for p in (table, report, rejected))
+
+
+@pytest.mark.req("REQ-0.7b")
+def test_right_trimmed_workflow_recovers_every_row(tmp_path, trimmed):
+    status, table, report, rejected = convert(
+        tmp_path, trimmed, "--record-width", "19", "--short-lines", "pad", "--header-line", "1"
+    )
+    assert status == ExitCode.SUCCESS
+    assert len(table.read_text(encoding="utf-8").rstrip("\n").split("\n")) == len(TRIMMED_ROWS)
+    assert rejected.read_text(encoding="utf-8") == f"1\tlength\t{TRIMMED_HEADING}\n"
+    text = report.read_text(encoding="utf-8")
+    assert f"header           {TRIMMED_HEADING!r}" in text
+    assert "padding-and-preamble" in text
+    # The stated width and share are the effective ones the columns use.
+    assert "record width     19 (detected 13)" in text
+    assert "lines at width   1 of 9 lines (11.1%)" in text
+
+
+@pytest.mark.req("REQ-0.7b")
+def test_header_line_via_the_cli(tmp_path, clean):
+    """--header-line picks which preamble line names the columns."""
+    _s, default_table, _r, _j = convert(tmp_path, clean, prefix="auto")
+    status, table, report, _j2 = convert(tmp_path, clean, "--header-line", "1", prefix="forced")
+    assert status == ExitCode.SUCCESS
+    text = report.read_text(encoding="utf-8")
+    assert "header-line      1" in text
+    title = clean.read_text(encoding="utf-8").split("\n")[0]
+    assert f"header           {title!r}" in text
+    # The real heading is not record-width, so it is still rejected, not carved.
+    assert table.read_text(encoding="utf-8") == default_table.read_text(encoding="utf-8")
+
+
+@pytest.mark.req("REQ-0.7b")
+def test_header_line_zero_means_no_preamble(tmp_path):
+    rows = [f"{i:4d}  {i * 2:6d}  {i * 3:6d}" for i in range(1, 9)]
+    # A short first record, which the length rule would have taken as preamble.
+    rows[0] = rows[0].rstrip()
+    f = tmp_path / "bare.txt"
+    f.write_text("\n".join(r.rstrip() for r in rows) + "\n", encoding="ascii")
+    status, table, report, rejected = convert(
+        tmp_path, f, "--short-lines", "pad", "--header-line", "0"
+    )
+    assert status == ExitCode.SUCCESS
+    assert rejected.read_text(encoding="utf-8") == ""
+    assert len(table.read_text(encoding="utf-8").rstrip("\n").split("\n")) == 8
+    assert "preamble         none" in report.read_text(encoding="utf-8")
+
+
+def test_negative_header_line_is_a_usage_error(tmp_path, clean):
+    status, *_ = convert(tmp_path, clean, "--header-line", "-1")
+    assert status == ExitCode.USAGE
+
+
+BYTE_PADDED_ROWS = [
+    ("Zurich", 1),
+    ("Zürich", 22),
+    ("Genève", 333),
+    ("Neuchâtel", 4),
+    ("Bern", 55),
+] * 2
+
+
+def byte_padded(encoding):
+    """Records padded to a fixed width in *bytes* under ``encoding``."""
+    lines = []
+    for name, value in BYTE_PADDED_ROWS:
+        head = f"{name}".encode(encoding)
+        lines.append(head + b" " * (14 - len(head)) + f"{value:6d}".encode("ascii"))
+    return b"\n".join(lines) + b"\n"
+
+
+@pytest.mark.req("REQ-1.8")
+@pytest.mark.req("REQ-1.12")
+def test_latin1_input_needs_and_accepts_its_encoding(tmp_path):
+    f = tmp_path / "legacy.txt"
+    f.write_bytes(byte_padded("latin-1"))
+    status, *_ = convert(tmp_path, f, prefix="utf8")
+    assert status == ExitCode.INPUT  # 0xFC is not valid UTF-8
+    status, table, _r, rejected = convert(
+        tmp_path, f, "--encoding", "latin-1", "--header-line", "0", prefix="latin1"
+    )
+    assert status == ExitCode.SUCCESS
+    rows = [row.split("\t") for row in table.read_text(encoding="utf-8").rstrip("\n").split("\n")]
+    assert [r[0] for r in rows] == [name for name, _ in BYTE_PADDED_ROWS]
+    assert rejected.read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.req("REQ-1.10")
+def test_byte_padded_utf8_is_diagnosed(tmp_path):
+    """Uniform in bytes, ragged in characters: the byte-vs-char signature."""
+    f = tmp_path / "bytepadded.txt"
+    f.write_bytes(byte_padded("utf-8"))
+    _s, _t, report, _j = convert(tmp_path, f)
+    assert "byte-vs-char" in report.read_text(encoding="utf-8")
+
+
+def test_uniform_utf8_is_not_diagnosed(tmp_path, clean):
+    _s, _t, report, _j = convert(tmp_path, clean)
+    assert "byte-vs-char" not in report.read_text(encoding="utf-8")
+
+
+@pytest.mark.req("REQ-4.11")
+def test_columns_and_widths_are_mutually_exclusive(tmp_path, clean):
+    """Refused at parse time, before the input is read."""
+    with pytest.raises(SystemExit) as exc:
+        convert(tmp_path, clean, "--columns", "1-12", "--widths", "12")
+    assert exc.value.code == ExitCode.USAGE
+
+
+@pytest.mark.parametrize("value", ["2", "3"])
+def test_explicit_min_gutter_with_columns_is_flagged(tmp_path, clean, value):
+    """Even the default value, when passed, is a choice that has no effect."""
+    _s, _t, report, _j = convert(tmp_path, clean, "--columns", "1-12", "--min-gutter", value)
+    assert "min-gutter-ignored" in report.read_text(encoding="utf-8")
+
+
+def test_min_gutter_not_flagged_when_not_passed(tmp_path, clean):
+    _s, _t, report, _j = convert(tmp_path, clean, "--columns", "1-12")
+    assert "min-gutter-ignored" not in report.read_text(encoding="utf-8")
+
+
+@pytest.mark.req("REQ-0.15")
+def test_outputs_use_lf_on_every_platform(tmp_path, messy):
+    """Explicit LF, never the platform newline.
+
+    On POSIX the two are the same, so this can only fail on Windows — which is
+    why CI runs the suite there too.
+    """
+    _s, table, report, rejected = convert(tmp_path, messy)
+    for path in (table, report, rejected):
+        assert b"\r" not in path.read_bytes(), path.name
