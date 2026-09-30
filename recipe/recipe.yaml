@@ -57,7 +57,10 @@ tests:
       imports:
         - fixed2tab
       pip_check: true
-      python_version: ${{ python_min }}.*
+      # noarch installs on every Python at or above python_min, so test both ends.
+      python_version:
+        - ${{ python_min }}.*
+        - "*"
   - script:
       - fixed2tab --version
       - fixed2tab --help
