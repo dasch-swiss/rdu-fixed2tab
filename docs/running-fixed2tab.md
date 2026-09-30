@@ -9,29 +9,29 @@ finish, including how to read the report and correct the result.
 
 ## 1. Install a local build
 
-The package is not yet on conda-forge or PyPI, so build it from the
-repository. You need `conda-build` once:
+The conda-forge package is not yet available, so build it from the
+repository. You need [rattler-build](https://rattler-build.prefix.dev/) once:
 
 ```console
-$ conda install -n base conda-build
+$ conda install -n base -c conda-forge rattler-build
 ```
 
 Then, from the repository root:
 
 ```console
-$ conda build conda-recipe
-$ conda create -n fixed2tab-local -c local fixed2tab
+$ rattler-build build --recipe recipe
+$ conda create -n fixed2tab-local -c ./output -c conda-forge fixed2tab
 $ conda activate fixed2tab-local
 ```
 
 **Rebuilding after a code change needs a new build number.** Raise `number:`
-in `conda-recipe/meta.yaml` before each rebuild. conda identifies a package by
+in `recipe/recipe.yaml` before each rebuild. conda identifies a package by
 name, version and build number, so rebuilding with unchanged numbers silently
 reinstalls the previous package. Replace the environment after rebuilding:
 
 ```console
 $ conda env remove -n fixed2tab-local
-$ conda create -n fixed2tab-local -c local fixed2tab
+$ conda create -n fixed2tab-local -c ./output -c conda-forge fixed2tab
 $ conda activate fixed2tab-local
 $ conda list fixed2tab       # the Build column must end in the new number
 ```

@@ -84,14 +84,15 @@ jobs:
           fixed2tab --help > /dev/null
 
       - name: Conda recipe version matches the package
-        # Two hard-coded copies until the recipe reads the published sdist.
+        # The recipe cannot read the version from the package, so the version
+        # is written twice. This check keeps the two copies equal.
         run: |
           python - <<'PY'
           import re, sys
           init = open("src/fixed2tab/__init__.py", encoding="utf-8").read()
-          recipe = open("conda-recipe/meta.yaml", encoding="utf-8").read()
+          recipe = open("recipe/recipe.yaml", encoding="utf-8").read()
           package = re.search(r'__version__ = "([^"]+)"', init)[1]
-          conda = re.search(r'set version = "([^"]+)"', recipe)[1]
+          conda = re.search(r'^  version: "([^"]+)"', recipe, re.MULTILINE)[1]
           sys.exit(f"version mismatch: package {package}, recipe {conda}" if package != conda else 0)
           PY
 
@@ -104,6 +105,16 @@ jobs:
           runtime = [d for d in deps if "extra ==" not in d]
           sys.exit(f"unexpected runtime dependencies: {runtime}" if runtime else 0)
           PY
+
+  conda-recipe:
+    name: conda recipe builds and its tests pass
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: prefix-dev/rattler-build-action@v0.2.39
+        with:
+          recipe-path: recipe/recipe.yaml
+          upload-artifact: false
 
   test-data-size:
     name: test-data stays small
