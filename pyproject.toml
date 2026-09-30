@@ -40,8 +40,8 @@ fixed2tab = "fixed2tab.cli:main"
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11"]
 
-# Single source of truth for the version. It is written in exactly one place;
-# the conda recipe and the Galaxy macros.xml both derive from the released value.
+# Canonical copy of the version. The conda recipe's `context.version` is a
+# second copy that CI keeps equal to this one.
 [tool.hatch.version]
 path = "src/fixed2tab/__init__.py"
 
@@ -50,7 +50,7 @@ packages = ["src/fixed2tab"]
 
 [tool.hatch.build.targets.sdist]
 # Tests ship in the sdist for downstream verification but are not a top-level
-# package in the installed distribution — a conda-forge reviewer check.
+# package in the installed distribution.
 include = ["src/", "tests/", "test-data/", "LICENSE", "README.md", "pyproject.toml"]
 
 [tool.pytest.ini_options]

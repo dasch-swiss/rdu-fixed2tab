@@ -16,8 +16,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.10 is conda-forge's current python_min and therefore the floor the
-        # package claims; the newest is tested so the claim stays honest at both
+        # 3.10 is the floor the package claims (requires-python and the recipe's
+        # python_min); the newest is tested so the claim stays honest at both
         # ends of the supported range.
         python-version: ["3.10", "3.11", "3.12", "3.13"]
         os: [ubuntu-latest]
@@ -62,19 +62,29 @@ jobs:
           python -m build
 
       - name: LICENSE must be in the sdist
-        # conda-forge requires a licence file inside the distribution, not only
-        # in the repository.
         run: tar -tzf dist/*.tar.gz | grep -q 'LICENSE' || { echo "LICENSE missing from sdist"; exit 1; }
 
-      - name: No top-level tests package in the wheel
+      - name: Tag archive contains LICENSE and builds a wheel
+        # conda-forge builds from the GitHub tag archive, which is `git archive`
+        # of the tag, with `pip install .`. This rebuilds that tree the same way.
+        run: |
+          mkdir archive
+          git archive HEAD | tar -x -C archive
+          test -f archive/LICENSE || { echo "LICENSE missing from the tag archive"; exit 1; }
+          pip wheel ./archive --no-deps -w archive-dist
+
+      - name: No top-level tests package in the wheels
         # A conda-forge reviewer check: an installed `tests` package would
         # collide with every other project that ships one.
         run: |
           python - <<'PY'
           import zipfile, glob, sys
-          names = zipfile.ZipFile(glob.glob("dist/*.whl")[0]).namelist()
-          bad = [n for n in names if n.split("/")[0] in {"tests", "test", "_tests"}]
-          sys.exit(f"top-level test package in wheel: {bad}" if bad else 0)
+          wheels = glob.glob("dist/*.whl") + glob.glob("archive-dist/*.whl")
+          for wheel in wheels:
+              names = zipfile.ZipFile(wheel).namelist()
+              bad = [n for n in names if n.split("/")[0] in {"tests", "test", "_tests"}]
+              if bad:
+                  sys.exit(f"top-level test package in {wheel}: {bad}")
           PY
 
       - name: Installed console script works
@@ -83,17 +93,33 @@ jobs:
           fixed2tab --version
           fixed2tab --help > /dev/null
 
-      - name: Conda recipe version matches the package
-        # The recipe cannot read the version from the package, so the version
-        # is written twice. This check keeps the two copies equal.
+      - name: Conda recipe matches the package version and Python floor
+        # The recipe cannot read these values from the package, so each is
+        # written twice. src/fixed2tab/__init__.py and pyproject.toml are the
+        # canonical copies; recipe/recipe.yaml `context:` follows them.
         run: |
           python - <<'PY'
           import re, sys
-          init = open("src/fixed2tab/__init__.py", encoding="utf-8").read()
-          recipe = open("recipe/recipe.yaml", encoding="utf-8").read()
-          package = re.search(r'__version__ = "([^"]+)"', init)[1]
-          conda = re.search(r'^  version: "([^"]+)"', recipe, re.MULTILINE)[1]
-          sys.exit(f"version mismatch: package {package}, recipe {conda}" if package != conda else 0)
+
+          def find(pattern, path):
+              text = open(path, encoding="utf-8").read()
+              match = re.search(pattern, text, re.MULTILINE)
+              if match is None:
+                  sys.exit(f"{path}: no match for {pattern!r}")
+              return match[1]
+
+          package = find(r'^__version__ = "([^"]+)"', "src/fixed2tab/__init__.py")
+          floor = find(r'^requires-python = ">=([0-9.]+)"', "pyproject.toml")
+          conda = find(r'^  version: "([^"]+)"', "recipe/recipe.yaml")
+          python_min = find(r'^  python_min: "([^"]+)"', "recipe/recipe.yaml")
+          errors = []
+          if package != conda:
+              errors.append(f"version: src/fixed2tab/__init__.py has {package}, "
+                            f"recipe/recipe.yaml context.version has {conda}")
+          if floor != python_min:
+              errors.append(f"python floor: pyproject.toml requires-python has {floor}, "
+                            f"recipe/recipe.yaml context.python_min has {python_min}")
+          sys.exit("\n".join(errors) if errors else 0)
           PY
 
       - name: Package declares no runtime dependencies
@@ -113,7 +139,11 @@ jobs:
       - uses: actions/checkout@v5
       - uses: prefix-dev/rattler-build-action@v0.2.39
         with:
+          # The action's own default is older than the version the recipe is
+          # tested with locally.
+          rattler-build-version: v0.76.1
           recipe-path: recipe/recipe.yaml
+          build-args: --channel conda-forge
           upload-artifact: false
 
   test-data-size:

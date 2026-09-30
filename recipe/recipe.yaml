@@ -4,10 +4,11 @@
 # package without a release:
 #
 #   rattler-build build --recipe recipe
-#   conda create -n fixed2tab-local -c ./output fixed2tab
+#   conda create -n fixed2tab-local -c ./output -c conda-forge fixed2tab
 #
-# The conda-forge copy in staged-recipes and in the feedstock differs in one
-# place only: `source` uses the GitHub tag archive, not a local path:
+# The conda-forge copy in staged-recipes and in the feedstock differs in two
+# places only: `build.number` starts at 0 for every version, and `source` uses
+# the GitHub tag archive, not a local path:
 #
 #   source:
 #     url: https://github.com/dasch-swiss/rdu-fixed2tab/archive/refs/tags/v${{ version }}.tar.gz
@@ -15,8 +16,7 @@
 
 context:
   version: "0.1.0"
-  # conda-forge's global python_min replaces this value on the feedstock. It is
-  # set here so that a local build without the conda-forge pinning also works.
+  # Keep equal to the requires-python floor in pyproject.toml. CI checks this.
   python_min: "3.10"
 
 package:
@@ -29,8 +29,8 @@ source:
 build:
   # Bump on every local rebuild of unchanged source. conda keys its cache on
   # name-version-build, so rebuilding without a bump reinstalls the previous
-  # package silently -- even with --force-reinstall. The conda-forge copy
-  # starts at 0 for every new version.
+  # package silently -- even with --force-reinstall. Do not copy a bumped
+  # number to the conda-forge copy.
   number: 0
   # Pure Python, identical on every platform and every supported interpreter.
   # The conditions this relies on are checked in CI: an entry point rather

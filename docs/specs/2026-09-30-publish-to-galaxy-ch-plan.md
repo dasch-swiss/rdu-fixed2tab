@@ -1,5 +1,7 @@
 # Publish fixed2tab 0.1.0 on conda-forge
 
+Status: Phase A is implemented. `recipe/recipe.yaml` and `README.md` are the source of truth for the recipe and the install commands. This plan records the decisions and the remaining phases.
+
 ## Context
 
 We want a `fixed2tab` conda package so that a Galaxy tool (later, ideally in tools-iuc) can declare it as its requirement.
@@ -23,7 +25,7 @@ User decisions:
 
 Evidence on containers: `galaxyproject/planemo-ci-action` `planemo_ci_actions.sh` tests every tool with `--biocontainers --no_dependency_resolution` by default. Only the paths in `.tt_biocontainer_skip` use conda.
 
-The repo is already prepared. It has a stdlib-only package, a `noarch: python` local recipe in `conda-recipe/meta.yaml`, and CI checks for the sdist, the wheel and the version sync.
+Before Phase A, the repo had a stdlib-only package, a `noarch: python` local recipe in `conda-recipe/meta.yaml`, and CI checks for the sdist, the wheel and the version sync.
 
 ## Phase A — v1 recipe in this repo (branch `claude/fixed2tab-conda-package-b325b9`)
 
@@ -39,7 +41,7 @@ The repo is already prepared. It has a stdlib-only package, a `noarch: python` l
 3. Update the CI step "Conda recipe version matches the package" in `.github/workflows/ci.yml`. The step reads `recipe/recipe.yaml` and matches `version: "..."` under `context`.
 4. Add a CI job that builds the recipe with `prefix-dev/rattler-build-action`. The job proves that the recipe builds and that its tests pass.
 5. Move the local conda build in `README.md` and `docs/running-fixed2tab.md` to a developer section:
-   - Use `rattler-build build --recipe recipe` and `conda create -n fixed2tab-local -c ./output fixed2tab`.
+   - Use `rattler-build build --recipe recipe` and `conda create -n fixed2tab-local -c ./output -c conda-forge fixed2tab`.
    - Keep the build-number warning, with the `recipe/recipe.yaml` path.
    - Remove the mention of PyPI. The package is published only on conda-forge.
    - Add the end-user install section (`conda install -c conda-forge fixed2tab`, or `pixi add fixed2tab`) only in Phase C step 6, when the command works.
@@ -70,7 +72,7 @@ The repo is already prepared. It has a stdlib-only package, a `noarch: python` l
 
 ## Parallel to Phase C — ask the usegalaxy.ch admin
 
-Ask the admin which dependency resolver usegalaxy.ch uses: conda, Docker, or Singularity containers. I prepare the message and the user sends it. The answer decides the next step:
+Ask the admin which dependency resolver usegalaxy.ch uses: conda, Docker, or Singularity containers. Claude drafts the message, and a maintainer sends it. The answer decides the next step:
 
 - Conda resolver: the tool can go live as soon as conda-forge publishes. Phase D is needed only for tools-iuc.
 - Containers: Phase D is needed before the tool can run on usegalaxy.ch.
@@ -92,7 +94,3 @@ The Galaxy wrapper itself (`macros.xml`, tool XML, `.shed.yml`, a tools-iuc PR) 
 - Phase A: the local checks in step A6 pass, and CI is green, including the rattler-build job.
 - Phase C: staged-recipes CI is green on linux-64. `noarch` builds only there.
 - End-to-end: `conda create -n t -c conda-forge fixed2tab=0.1.0 && conda run -n t fixed2tab --version` prints `0.1.0`.
-
-## Notes
-
-- In this sandbox, `gh` fails with a TLS error. Outward-facing steps (push, release, fork, PRs) may need the sandbox off or a manual run by the user.
