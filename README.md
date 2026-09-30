@@ -48,29 +48,34 @@ manual to fall out of date.
 
 Requires Python 3.10 or newer and has no other dependencies.
 
-Not yet published to conda-forge or PyPI, so install it from a local build:
+The conda-forge package is not yet available.
 
-```console
-$ conda install -n base conda-build   # once; not part of a base conda install
-$ cd rdu-fixed2tab
-$ conda build conda-recipe
-$ conda create -n fixed2tab-local -c local fixed2tab
-$ conda activate fixed2tab-local
-$ fixed2tab --version
-```
+### Development
 
-**Rebuilding after a code change needs a build-number bump** in
-`conda-recipe/meta.yaml`. conda keys its cache on name-version-build, so
-rebuilding unchanged coordinates reinstalls the previous package silently — even
-with `--force-reinstall`, and while reporting success.
-
-For development, an editable install avoids the rebuild entirely:
+An editable install is the fastest way to work on the code:
 
 ```console
 $ python -m venv .venv && .venv/bin/pip install -e ".[dev]"
 $ .venv/bin/fixed2tab --help
 $ .venv/bin/python -m pytest
 ```
+
+To test the conda package itself, build it locally from `recipe/recipe.yaml`
+with [rattler-build](https://rattler-build.prefix.dev/):
+
+```console
+$ conda install -n base -c conda-forge rattler-build   # once
+$ cd rdu-fixed2tab
+$ rattler-build build --recipe recipe
+$ conda create -n fixed2tab-local -c ./output -c conda-forge fixed2tab
+$ conda activate fixed2tab-local
+$ fixed2tab --version
+```
+
+**Rebuilding after a code change needs a build-number bump** in
+`recipe/recipe.yaml`. conda keys its cache on name-version-build, so
+rebuilding unchanged coordinates reinstalls the previous package silently — even
+with `--force-reinstall`, and while reporting success.
 
 ## Status
 

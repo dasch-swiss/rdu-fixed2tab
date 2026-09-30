@@ -1,0 +1,88 @@
+# Local conda recipe, in the v1 format that rattler-build reads.
+#
+# It builds from the working tree, so you can build, install and test the
+# package without a release:
+#
+#   rattler-build build --recipe recipe
+#   conda create -n fixed2tab-local -c ./output -c conda-forge fixed2tab
+#
+# The conda-forge copy in staged-recipes and in the feedstock differs in two
+# places only: `build.number` starts at 0 for every version, and `source` uses
+# the GitHub tag archive, not a local path:
+#
+#   source:
+#     url: https://github.com/dasch-swiss/rdu-fixed2tab/archive/refs/tags/v${{ version }}.tar.gz
+#     sha256: <64 hex chars>
+
+context:
+  version: "0.1.0"
+  # Keep equal to the requires-python floor in pyproject.toml. CI checks this.
+  python_min: "3.10"
+
+package:
+  name: fixed2tab
+  version: ${{ version }}
+
+source:
+  path: ..
+
+build:
+  # Bump on every local rebuild of unchanged source. conda keys its cache on
+  # name-version-build, so rebuilding without a bump reinstalls the previous
+  # package silently -- even with --force-reinstall. Do not copy a bumped
+  # number to the conda-forge copy.
+  number: 0
+  # Pure Python, identical on every platform and every supported interpreter.
+  # The conditions this relies on are checked in CI: an entry point rather
+  # than `scripts=`, no pre/post-link scripts, no selectors, and no
+  # version-dependent dependencies.
+  noarch: python
+  script: ${{ PYTHON }} -m pip install . -vv --no-deps --no-build-isolation
+  python:
+    entry_points:
+      - fixed2tab = fixed2tab.cli:main
+
+requirements:
+  host:
+    - python ${{ python_min }}.*
+    - pip
+    - hatchling
+  run:
+    - python >=${{ python_min }}
+
+tests:
+  # A conda test proves the package was built and installed correctly. It is
+  # not the place to re-run the project's own suite.
+  - python:
+      imports:
+        - fixed2tab
+      pip_check: true
+      python_version: ${{ python_min }}.*
+  - script:
+      - fixed2tab --version
+      - fixed2tab --help
+
+about:
+  homepage: https://github.com/dasch-swiss/rdu-fixed2tab
+  repository: https://github.com/dasch-swiss/rdu-fixed2tab
+  documentation: https://github.com/dasch-swiss/rdu-fixed2tab#readme
+  summary: Convert fixed-width text files to tabular (TSV)
+  description: |
+    fixed2tab converts fixed-width column text into TSV, detecting the column
+    boundaries automatically by locating character positions that are blank in
+    every record.
+
+    Legacy scientific codes still emit results as fixed-width columns, which
+    delimiter-based tools cannot read: multi-token cells are shattered, and rows
+    where a sparse column is blank have every later field shifted left. Neither
+    failure raises an error.
+
+    Every run writes the table, a geometry report and every unparsed line, so
+    that table rows plus rejected lines always equals input lines.
+  license: MIT
+  license_file: LICENSE
+
+extra:
+  recipe-maintainers:
+    - gautschr
+    - jnussbaum
