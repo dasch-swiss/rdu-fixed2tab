@@ -95,6 +95,43 @@ $ conda list -n fixed2tab-local fixed2tab   # the Build column must end in the n
 
 `fixed2tab --version` does not distinguish builds of the same version.
 
+## Previewing the Galaxy tool
+
+The Galaxy wrapper lives only in
+[tools-iuc](https://github.com/galaxyproject/tools-iuc/tree/main/tools/fixed2tab),
+at `tools/fixed2tab/`. Before you open a tools-iuc PR, preview the wrapper from
+the branch in your fork of tools-iuc.
+
+Install [planemo](https://planemo.readthedocs.io/) once, in its own virtual
+environment:
+
+```console
+$ uv venv ~/.venvs/planemo
+$ uv pip install -p ~/.venvs/planemo/bin/python planemo
+```
+
+Then, in your tools-iuc checkout, on the wrapper branch:
+
+```console
+$ ~/.venvs/planemo/bin/planemo shed_lint --tools --ensure_metadata --urls --fail_level warn --recursive tools/fixed2tab/
+$ ~/.venvs/planemo/bin/planemo test tools/fixed2tab/
+$ ~/.venvs/planemo/bin/planemo serve tools/fixed2tab/
+```
+
+1. The lint command is the one that tools-iuc CI runs. Every warning fails it.
+2. `planemo test` runs the tests in the wrapper and writes `tool_test_output.html`.
+3. `planemo serve` starts a local Galaxy with only this tool. Open
+   http://127.0.0.1:9090 and select the tool in the tool panel. Upload
+   `tools/fixed2tab/test-data/fixedwidth_input.txt`, and do not select
+   "convert spaces to tabs". Then run the tool on it.
+4. Stop the server with Ctrl+C.
+
+The first run of `planemo test` or `planemo serve` downloads Galaxy and takes
+several minutes. Both commands get `fixed2tab` from conda-forge through conda.
+tools-iuc CI uses containers instead (`--biocontainers`). Do not use
+`--biocontainers` on macOS: Docker Desktop does not share the macOS temporary
+directory, and on Apple Silicon Galaxy does not find the image that it builds.
+
 ## Releasing a new version
 
 A code change reaches Galaxy through three repositories: this one, the

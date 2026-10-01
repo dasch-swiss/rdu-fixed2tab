@@ -1,6 +1,6 @@
 # Publish fixed2tab 0.1.0 on conda-forge
 
-Status: Phases A to C are complete. `fixed2tab` 0.1.0 is on conda-forge (`conda-forge/fixed2tab-feedstock`). Phase E is in progress. `recipe/recipe.yaml` and `README.md` are the source of truth for the recipe and the install commands.
+Status: Phases A to C are complete. `fixed2tab` 0.1.0 is on conda-forge (`conda-forge/fixed2tab-feedstock`). Phase D is in progress. `recipe/recipe.yaml` and `README.md` are the source of truth for the recipe and the install commands.
 
 ## Context
 
@@ -70,17 +70,11 @@ Before Phase A, the repo had a stdlib-only package, a `noarch: python` local rec
 5. After the merge, check that `conda-forge/fixed2tab-feedstock` exists and that `conda install -c conda-forge fixed2tab=0.1.0` works.
 6. Add the end-user install section to `README.md` and `docs/running-fixed2tab.md` (a small follow-up PR).
 
-## Parallel to Phase C — ask the usegalaxy.ch admin
-
-Ask the admin which dependency resolver usegalaxy.ch uses: conda, Docker, or Singularity containers. Claude drafts the message, and a maintainer sends it. The answer decides when the tool can run:
-
-- Conda resolver: as soon as the Tool Shed has the tool.
-- Containers: after the Tool Shed has the tool and planemo-monitor registers the image, about one day later.
-
-## Phase E — Galaxy wrapper in tools-iuc
+## Phase D — Galaxy wrapper in tools-iuc
 
 The wrapper goes to `tools/fixed2tab/` in `galaxyproject/tools-iuc`, not to this repository.
 
+- **Source of truth:** the wrapper exists only in tools-iuc. A copy in this repository would drift from the bot and reviewer changes there. The README section "Previewing the Galaxy tool" shows how to check the wrapper locally before a tools-iuc PR.
 - **Files:** `macros.xml` (version tokens, requirement, EDAM terms, citation), `fixed2tab.xml`, `.shed.yml` (owner `iuc`), and `test-data/` with copies of the three fixtures in this repository's `test-data/`.
 - **Parameters:** every CLI option. `--columns` and `--widths` are a conditional with automatic detection as the default. `--strict` and `--allow-rejects` are a second conditional. Error detection uses the exit code.
 - **Tests:** one test per code path, among them the two failure exits 2 and 4. The table compares with `fixedwidth_expected.tsv`. The report uses text assertions, so a change to the report layout does not break a later version bump.
@@ -92,5 +86,5 @@ The wrapper goes to `tools/fixed2tab/` in `galaxyproject/tools-iuc`, not to this
 
 - Phase A: the local checks in step A6 pass, and CI is green, including the rattler-build job.
 - Phase C: staged-recipes CI is green on linux-64. `noarch` builds only there.
-- Phase E: `planemo shed_lint` and `planemo test` pass locally, and tools-iuc CI is green. After the merge, the tool installs from the Tool Shed.
+- Phase D: `planemo shed_lint` and `planemo test` pass locally, and tools-iuc CI is green. After the merge, the tool installs from the Tool Shed.
 - End-to-end: `conda create -n t -c conda-forge fixed2tab=0.1.0 && conda run -n t fixed2tab --version` prints `0.1.0`.
