@@ -1,6 +1,6 @@
 # Publish fixed2tab 0.1.0 on conda-forge
 
-Status: Phase A is implemented. `recipe/recipe.yaml` and `README.md` are the source of truth for the recipe and the install commands. This plan records the decisions and the remaining phases.
+Status: Phases A, B and C are complete. `fixed2tab` 0.1.0 is on conda-forge (`conda-forge/fixed2tab-feedstock`). Phase D is next. `recipe/recipe.yaml` and `README.md` are the source of truth for the recipe and the install commands.
 
 ## Context
 

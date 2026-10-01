@@ -7,36 +7,18 @@ finish, including how to read the report and correct the result.
 
 `fixed2tab --help` is the complete reference for every option.
 
-## 1. Install a local build
+## 1. Install the package
 
-The conda-forge package is not yet available, so build it from the
-repository. You need [rattler-build](https://rattler-build.prefix.dev/) once:
-
-```console
-$ conda install -n base -c conda-forge rattler-build
-```
-
-Then, from the repository root:
+Install `fixed2tab` from conda-forge into a new environment:
 
 ```console
-$ rattler-build build --recipe recipe
-$ conda create -n fixed2tab-local -c ./output -c conda-forge fixed2tab
-$ conda activate fixed2tab-local
+$ conda create -n fixed2tab -c conda-forge fixed2tab
+$ conda activate fixed2tab
 ```
 
-**Rebuilding after a code change needs a new build number.** Raise `number:`
-in `recipe/recipe.yaml` before each rebuild. conda identifies a package by
-name, version and build number, so rebuilding with unchanged numbers silently
-reinstalls the previous package. Replace the environment after rebuilding:
-
-```console
-$ conda env remove -n fixed2tab-local
-$ conda create -n fixed2tab-local -c ./output -c conda-forge fixed2tab
-$ conda activate fixed2tab-local
-$ conda list fixed2tab       # the Build column must end in the new number
-```
-
-`fixed2tab --version` does not distinguish builds of the same version.
+To test a change to the code before a release, build the package locally.
+The [Development section of the README](../README.md#development) gives the
+commands.
 
 ## 2. Run the tool with no extra options
 

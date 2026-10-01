@@ -48,7 +48,16 @@ manual to fall out of date.
 
 Requires Python 3.10 or newer and has no other dependencies.
 
-The conda-forge package is not yet available.
+Install the package from conda-forge into a new environment:
+
+```console
+$ conda create -n fixed2tab -c conda-forge fixed2tab
+$ conda activate fixed2tab
+$ fixed2tab --version
+```
+
+With pixi, run `pixi add fixed2tab` in a project that uses the conda-forge
+channel.
 
 ### Development
 
@@ -75,11 +84,21 @@ $ fixed2tab --version
 **Rebuilding after a code change needs a build-number bump** in
 `recipe/recipe.yaml`. conda keys its cache on name-version-build, so
 rebuilding unchanged coordinates reinstalls the previous package silently — even
-with `--force-reinstall`, and while reporting success.
+with `--force-reinstall`, and while reporting success. Replace the environment
+after each rebuild:
+
+```console
+$ conda env remove -n fixed2tab-local
+$ conda create -n fixed2tab-local -c ./output -c conda-forge fixed2tab
+$ conda list -n fixed2tab-local fixed2tab   # the Build column must end in the new number
+```
+
+`fixed2tab --version` does not distinguish builds of the same version.
 
 ## Status
 
-Pre-release. See the [PRD and implementation plan](https://github.com/dasch-swiss/dasch-specs/tree/main/specs/2026-08-03-fixed2tab).
+Version 0.1.0, published on
+[conda-forge](https://anaconda.org/conda-forge/fixed2tab). See the [PRD and implementation plan](https://github.com/dasch-swiss/dasch-specs/tree/main/specs/2026-08-03-fixed2tab).
 
 ## Licence
 
