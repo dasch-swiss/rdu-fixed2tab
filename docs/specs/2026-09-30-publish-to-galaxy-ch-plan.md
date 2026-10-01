@@ -1,6 +1,6 @@
 # Publish fixed2tab 0.1.0 on conda-forge
 
-Status: Phases A, B and C are complete. `fixed2tab` 0.1.0 is on conda-forge (`conda-forge/fixed2tab-feedstock`). Phase D is next. `recipe/recipe.yaml` and `README.md` are the source of truth for the recipe and the install commands.
+Status: Phases A, B and C are complete. `fixed2tab` 0.1.0 is on conda-forge (`conda-forge/fixed2tab-feedstock`). Phase D is in review. `recipe/recipe.yaml` and `README.md` are the source of truth for the recipe and the install commands.
 
 ## Context
 
@@ -79,11 +79,18 @@ Ask the admin which dependency resolver usegalaxy.ch uses: conda, Docker, or Sin
 
 ## Phase D — container for Galaxy (after the feedstock publishes)
 
-Why: tools-iuc CI and container-based servers need an image. BioContainers builds images automatically only for bioconda packages.
+Why: container-based Galaxy servers need an image. BioContainers builds images automatically only for bioconda packages.
 
-1. Look at the `jq` tags on quay.io to find the image name that a single-package entry produces.
-2. Open a PR on `BioContainers/multi-package-containers` that adds `fixed2tab=0.1.0` to `combinations/hash.tsv`. Copy the format of the single-package conda-forge lines (`jq=1.6`).
-3. After the merge, write down the published `quay.io/biocontainers/…` image tag. The Galaxy wrapper needs it for `planemo test --biocontainers`.
+Findings:
+
+- tools-iuc PR CI does not need a published image. `planemo test --biocontainers` sets `enable_beta_mulled_containers` and configures involucro, so Galaxy builds a missing image during the test.
+- After a merge, `galaxyproject/planemo-monitor` runs `planemo container_register` on tools-iuc every day. For a tool with no image, it opens a PR on `BioContainers/multi-package-containers` that adds `combinations/<name>:<version>-0.tsv`, and a bot merges it. `tabicl:2.2.0` (conda-forge only) is an example.
+- Thus, a manual PR is necessary only for an image before the tools-iuc merge, or for a wrapper in a repository that planemo-monitor does not watch.
+
+Steps:
+
+1. Open a PR on `BioContainers/multi-package-containers` that adds `combinations/fixed2tab:0.1.0-0.tsv`, in the format that `container_register` writes. Done: BioContainers/multi-package-containers#4192.
+2. After the merge, check that `quay.io/biocontainers/fixed2tab:0.1.0` and `https://depot.galaxyproject.org/singularity/fixed2tab:0.1.0` exist.
 
 ## Out of scope
 
