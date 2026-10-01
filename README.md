@@ -97,20 +97,32 @@ $ conda list -n fixed2tab-local fixed2tab   # the Build column must end in the n
 
 ## Previewing the Galaxy tool
 
-The Galaxy wrapper lives only in
-[tools-iuc](https://github.com/galaxyproject/tools-iuc/tree/main/tools/fixed2tab),
-at `tools/fixed2tab/`. Before you open a tools-iuc PR, preview the wrapper from
-the branch in your fork of tools-iuc.
+The Galaxy wrapper lives only in tools-iuc, at `tools/fixed2tab/`. This section
+previews a wrapper change on your machine before anybody opens a tools-iuc PR.
 
-Install [planemo](https://planemo.readthedocs.io/) once, in its own virtual
-environment:
+You need git and [uv](https://docs.astral.sh/uv/). Install
+[planemo](https://planemo.readthedocs.io/) once, in its own virtual environment:
 
 ```console
 $ uv venv ~/.venvs/planemo
 $ uv pip install -p ~/.venvs/planemo/bin/python planemo
 ```
 
-Then, in your tools-iuc checkout, on the wrapper branch:
+Get the branch that holds the wrapper change. Until the first version is merged
+into tools-iuc, the wrapper is on the branch `fixed2tab` of
+[jnussbaum/tools-iuc](https://github.com/jnussbaum/tools-iuc/tree/fixed2tab/tools/fixed2tab).
+tools-iuc is large, so get only the wrapper directory:
+
+```console
+$ git clone --branch fixed2tab --depth 1 --filter=blob:none --sparse https://github.com/jnussbaum/tools-iuc.git tools-iuc-fixed2tab
+$ cd tools-iuc-fixed2tab
+$ git sparse-checkout set tools/fixed2tab
+```
+
+For a later change, use the fork and branch of that change. After the merge,
+use `https://github.com/galaxyproject/tools-iuc.git` with `--branch main`.
+
+Then lint, test and serve the wrapper:
 
 ```console
 $ ~/.venvs/planemo/bin/planemo shed_lint --tools --ensure_metadata --urls --fail_level warn --recursive tools/fixed2tab/
@@ -128,6 +140,7 @@ $ ~/.venvs/planemo/bin/planemo serve tools/fixed2tab/
 
 The first run of `planemo test` or `planemo serve` downloads Galaxy and takes
 several minutes. Both commands get `fixed2tab` from conda-forge through conda.
+If `~/miniconda3` does not exist, planemo installs conda there first.
 tools-iuc CI uses containers instead (`--biocontainers`). Do not use
 `--biocontainers` on macOS: Docker Desktop does not share the macOS temporary
 directory, and on Apple Silicon Galaxy does not find the image that it builds.
