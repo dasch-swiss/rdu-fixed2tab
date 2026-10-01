@@ -95,6 +95,37 @@ $ conda list -n fixed2tab-local fixed2tab   # the Build column must end in the n
 
 `fixed2tab --version` does not distinguish builds of the same version.
 
+## Releasing a new version
+
+A code change reaches Galaxy through three repositories: this one, the
+conda-forge feedstock, and the Galaxy wrapper in
+[tools-iuc](https://github.com/galaxyproject/tools-iuc/tree/main/tools/fixed2tab).
+Nobody uploads to the Tool Shed by hand. tools-iuc CI does that after a merge.
+
+1. Merge the code change. In the same PR, raise `__version__` in
+   `src/fixed2tab/__init__.py` and `context.version` in `recipe/recipe.yaml`.
+   CI fails if the two differ.
+2. Tag `vX.Y.Z` on `main` and publish a GitHub release for the tag.
+3. Merge the version PR on
+   [conda-forge/fixed2tab-feedstock](https://github.com/conda-forge/fixed2tab-feedstock).
+   The conda-forge bot opens it, usually within a day of the release. If the
+   release changes the dependencies or the Python floor, edit the feedstock
+   recipe in that PR. Make the same edit in `recipe/recipe.yaml` here.
+4. Get a version PR on tools-iuc. The `planemo-autoupdate` bot opens one every
+   Monday when conda-forge has a new version. It sets `@TOOL_VERSION@` in
+   `tools/fixed2tab/macros.xml`. To be faster, open the same PR yourself: set
+   `@TOOL_VERSION@` to the new version and `@VERSION_SUFFIX@` to `0`.
+5. If the release changes CLI options or outputs, edit the wrapper's inputs,
+   command, tests and help in that PR. The bot changes only the version.
+6. When CI is green, comment "please review" on the PR. After one IUC
+   approval and the merge, tools-iuc CI publishes the tool to the
+   [Galaxy Tool Shed](https://toolshed.g2.bx.psu.edu) as owner `iuc`. The
+   container follows within about a day.
+7. Ask the usegalaxy.ch admin to install the new revision.
+
+A fix to the wrapper only, with no new fixed2tab release, raises
+`@VERSION_SUFFIX@` by one in a tools-iuc PR, then follows steps 6 and 7.
+
 ## Status
 
 Version 0.1.0, published on

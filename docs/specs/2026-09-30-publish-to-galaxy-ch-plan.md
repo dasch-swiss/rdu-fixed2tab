@@ -1,6 +1,6 @@
 # Publish fixed2tab 0.1.0 on conda-forge
 
-Status: Phases A, B and C are complete. `fixed2tab` 0.1.0 is on conda-forge (`conda-forge/fixed2tab-feedstock`). Phase D is in review. `recipe/recipe.yaml` and `README.md` are the source of truth for the recipe and the install commands.
+Status: Phases A to C are complete. `fixed2tab` 0.1.0 is on conda-forge (`conda-forge/fixed2tab-feedstock`). Phase E is in progress. `recipe/recipe.yaml` and `README.md` are the source of truth for the recipe and the install commands.
 
 ## Context
 
@@ -11,7 +11,7 @@ Research results:
 - **Channel: conda-forge.** Bioconda accepts only bioinformatics packages, and fixed2tab is generic text processing. IUC accepts conda-forge and bioconda equally.
 - **Recipe format: v1 `recipe.yaml`** (rattler-build). staged-recipes accepts `meta.yaml` only in exceptional cases.
 - **Source: GitHub tag archive** (user decision). No PyPI release.
-- **Containers:** tools-iuc CI runs `planemo test --biocontainers` and needs a container. Biocontainers are automatic only for bioconda. For a conda-forge package, add one line `fixed2tab=0.1.0` to `BioContainers/multi-package-containers` `combinations/hash.tsv`.
+- **Containers:** a conda-forge package needs no manual container PR. tools-iuc PR CI builds a missing image during `planemo test --biocontainers`. After the merge, `galaxyproject/planemo-monitor` runs `planemo container_register` on tools-iuc every day, and a bot merges the image PR on `BioContainers/multi-package-containers`.
 - **Name:** free on PyPI, conda-forge and bioconda. No staged-recipes PR uses the name.
 
 User decisions:
@@ -72,32 +72,25 @@ Before Phase A, the repo had a stdlib-only package, a `noarch: python` local rec
 
 ## Parallel to Phase C — ask the usegalaxy.ch admin
 
-Ask the admin which dependency resolver usegalaxy.ch uses: conda, Docker, or Singularity containers. Claude drafts the message, and a maintainer sends it. The answer decides the next step:
+Ask the admin which dependency resolver usegalaxy.ch uses: conda, Docker, or Singularity containers. Claude drafts the message, and a maintainer sends it. The answer decides when the tool can run:
 
-- Conda resolver: the tool can go live as soon as conda-forge publishes. Phase D is needed only for tools-iuc.
-- Containers: Phase D is needed before the tool can run on usegalaxy.ch.
+- Conda resolver: as soon as the Tool Shed has the tool.
+- Containers: after the Tool Shed has the tool and planemo-monitor registers the image, about one day later.
 
-## Phase D — container for Galaxy (after the feedstock publishes)
+## Phase E — Galaxy wrapper in tools-iuc
 
-Why: container-based Galaxy servers need an image. BioContainers builds images automatically only for bioconda packages.
+The wrapper goes to `tools/fixed2tab/` in `galaxyproject/tools-iuc`, not to this repository.
 
-Findings:
-
-- tools-iuc PR CI does not need a published image. `planemo test --biocontainers` sets `enable_beta_mulled_containers` and configures involucro, so Galaxy builds a missing image during the test.
-- After a merge, `galaxyproject/planemo-monitor` runs `planemo container_register` on tools-iuc every day. For a tool with no image, it opens a PR on `BioContainers/multi-package-containers` that adds `combinations/<name>:<version>-0.tsv`, and a bot merges it. `tabicl:2.2.0` (conda-forge only) is an example.
-- Thus, a manual PR is necessary only for an image before the tools-iuc merge, or for a wrapper in a repository that planemo-monitor does not watch.
-
-Steps:
-
-1. Open a PR on `BioContainers/multi-package-containers` that adds `combinations/fixed2tab:0.1.0-0.tsv`, in the format that `container_register` writes. Done: BioContainers/multi-package-containers#4192.
-2. After the merge, check that `quay.io/biocontainers/fixed2tab:0.1.0` and `https://depot.galaxyproject.org/singularity/fixed2tab:0.1.0` exist.
-
-## Out of scope
-
-The Galaxy wrapper itself (`macros.xml`, tool XML, `.shed.yml`, a tools-iuc PR) gets a separate plan after Phase C. `@TOOL_VERSION@` will be `0.1.0`.
+- **Files:** `macros.xml` (version tokens, requirement, EDAM terms, citation), `fixed2tab.xml`, `.shed.yml` (owner `iuc`), and `test-data/` with copies of the three fixtures in this repository's `test-data/`.
+- **Parameters:** every CLI option. `--columns` and `--widths` are a conditional with automatic detection as the default. `--strict` and `--allow-rejects` are a second conditional. Error detection uses the exit code.
+- **Tests:** one test per code path, among them the two failure exits 2 and 4. The table compares with `fixedwidth_expected.tsv`. The report uses text assertions, so a change to the report layout does not break a later version bump.
+- **Lint:** tools-iuc CI runs `planemo shed_lint --fail_level warn`, so every warning fails. A citation is required, a DOI is not: the citation is a bibtex `@misc` with the GitHub URL. A bio.tools xref is optional, and the wrapper uses EDAM terms instead.
+- **Deploy:** after the merge, tools-iuc CI publishes the tool to the Tool Shed as owner `iuc`, and planemo-monitor registers the container.
+- **Later releases:** two bots carry a new version to Galaxy. The conda-forge autotick bot updates the feedstock, and `planemo-autoupdate` bumps `@TOOL_VERSION@` in tools-iuc every Monday. The README section "Releasing a new version" gives the procedure.
 
 ## Verification
 
 - Phase A: the local checks in step A6 pass, and CI is green, including the rattler-build job.
 - Phase C: staged-recipes CI is green on linux-64. `noarch` builds only there.
+- Phase E: `planemo shed_lint` and `planemo test` pass locally, and tools-iuc CI is green. After the merge, the tool installs from the Tool Shed.
 - End-to-end: `conda create -n t -c conda-forge fixed2tab=0.1.0 && conda run -n t fixed2tab --version` prints `0.1.0`.
