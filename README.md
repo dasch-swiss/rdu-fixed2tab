@@ -100,13 +100,8 @@ $ conda list -n fixed2tab-local fixed2tab   # the Build column must end in the n
 The Galaxy wrapper lives only in tools-iuc, at `tools/fixed2tab/`. This section
 previews a wrapper change on your machine before anybody opens a tools-iuc PR.
 
-You need git and [uv](https://docs.astral.sh/uv/). Install
-[planemo](https://planemo.readthedocs.io/) once, in its own virtual environment:
-
-```console
-$ uv venv ~/.venvs/planemo
-$ uv pip install -p ~/.venvs/planemo/bin/python planemo
-```
+You need git and [uv](https://docs.astral.sh/uv/). `uvx` runs
+[planemo](https://planemo.readthedocs.io/) without an install step.
 
 Get the branch that holds the wrapper change. Until the first version is merged
 into tools-iuc, the wrapper is on the branch `fixed2tab` of
@@ -125,9 +120,9 @@ use `https://github.com/galaxyproject/tools-iuc.git` with `--branch main`.
 Then lint, test and serve the wrapper:
 
 ```console
-$ ~/.venvs/planemo/bin/planemo shed_lint --tools --ensure_metadata --urls --fail_level warn --recursive tools/fixed2tab/
-$ ~/.venvs/planemo/bin/planemo test tools/fixed2tab/
-$ ~/.venvs/planemo/bin/planemo serve tools/fixed2tab/
+$ uvx planemo shed_lint --tools --ensure_metadata --urls --fail_level warn --recursive tools/fixed2tab/
+$ uvx planemo test tools/fixed2tab/
+$ uvx planemo serve tools/fixed2tab/
 ```
 
 1. The lint command is the one that tools-iuc CI runs. Every warning fails it.
